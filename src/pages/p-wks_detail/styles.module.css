@@ -1,0 +1,140 @@
+
+
+.pageWrapper {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background-color: #FAF7F4;
+  min-height: 100vh;
+}
+
+.navLinkActive {
+  color: #D4A574;
+  border-bottom: 2px solid #D4A574;
+}
+
+.navLink:hover {
+  color: #D4A574;
+}
+
+.sidebarItem {
+  transition: all 0.2s;
+}
+
+.sidebarItem:hover {
+  background-color: #FAF7F4;
+}
+
+.sidebarItemActive {
+  background-color: #F5EBE0;
+  color: #D4A574;
+  border-left: 3px solid #D4A574;
+}
+
+.tableRow:hover {
+  background-color: #FAF7F4;
+}
+
+.priorityHigh {
+  background-color: #D4A5A5;
+  color: white;
+}
+
+.priorityMedium {
+  background-color: #E8C4A0;
+  color: white;
+}
+
+.priorityLow {
+  background-color: #A8C5A0;
+  color: white;
+}
+
+.statusPending {
+  background-color: #E5DDD5;
+  color: #3E3E3E;
+}
+
+.statusProgress {
+  background-color: #A5C4D4;
+  color: white;
+}
+
+.statusCompleted {
+  background-color: #A8C5A0;
+  color: white;
+}
+
+.statusFailed {
+  background-color: #D4A5A5;
+  color: white;
+}
+
+.drawerOverlay {
+  background-color: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(2px);
+  position: absolute;
+  inset: 0;
+}
+
+.drawerContent {
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.1);
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 360px;
+  background-color: #FFFFFF;
+  overflow-y: auto;
+}
+
+.btnPrimary {
+  background-color: #D4A574;
+  color: white;
+  transition: all 0.2s;
+}
+
+.btnPrimary:hover {
+  background-color: #C9A882;
+  box-shadow: 0 4px 12px rgba(212, 165, 116, 0.3);
+}
+
+.btnSecondary {
+  background-color: #F5EBE0;
+  color: #3E3E3E;
+  transition: all 0.2s;
+}
+
+.btnSecondary:hover {
+  background-color: #E8D5C4;
+}
+
+.inputFocus:focus {
+  outline: none;
+  border-color: #D4A574;
+  box-shadow: 0 0 0 3px rgba(212, 165, 116, 0.1);
+}
+
+.checkboxCustom:checked {
+  background-color: #D4A574;
+  border-color: #D4A574;
+}
+
+.modalOverlay {
+  background-color: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  position: absolute;
+  inset: 0;
+}
+
+.modalContent {
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: #FFFFFF;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 384px;
+  margin: 0 16px;
+}
+

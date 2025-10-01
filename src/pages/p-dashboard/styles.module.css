@@ -1,0 +1,77 @@
+
+
+.pageWrapper {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background-color: #FAF7F4;
+  min-height: 100vh;
+}
+
+.navLinkActive {
+  color: #D4A574;
+  border-bottom: 2px solid #D4A574;
+}
+
+.navLink:hover {
+  color: #D4A574;
+}
+
+.sidebarItemActive {
+  background-color: #F5EBE0;
+  color: #D4A574;
+  border-left: 3px solid #D4A574;
+}
+
+.sidebarItem:hover {
+  background-color: #FAF7F4;
+}
+
+.workspaceCard:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.activityItem:hover {
+  background-color: #FAF7F4;
+}
+
+.btnPrimary {
+  background-color: #D4A574;
+  color: white;
+  transition: all 0.2s;
+}
+
+.btnPrimary:hover {
+  background-color: #C9A882;
+  box-shadow: 0 4px 12px rgba(212, 165, 116, 0.3);
+}
+
+.btnSecondary {
+  background-color: #F5EBE0;
+  color: #3E3E3E;
+  transition: all 0.2s;
+}
+
+.btnSecondary:hover {
+  background-color: #E8D5C4;
+}
+
+.statusPending {
+  background-color: #E5DDD5;
+  color: #3E3E3E;
+}
+
+.statusProgress {
+  background-color: #A5C4D4;
+  color: white;
+}
+
+.statusCompleted {
+  background-color: #A8C5A0;
+  color: white;
+}
+
+.statusFailed {
+  background-color: #D4A5A5;
+  color: white;
+}
+

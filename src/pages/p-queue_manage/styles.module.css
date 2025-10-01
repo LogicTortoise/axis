@@ -1,0 +1,174 @@
+
+
+.pageWrapper {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background-color: #FAF7F4;
+  min-height: 100vh;
+}
+
+.navLinkActive {
+  color: #D4A574;
+  border-bottom: 2px solid #D4A574;
+}
+
+.navLink:hover {
+  color: #D4A574;
+}
+
+.sidebarItemActive {
+  background-color: #F5EBE0;
+  color: #D4A574;
+  border-left: 3px solid #D4A574;
+}
+
+.sidebarItem:hover {
+  background-color: #FAF7F4;
+}
+
+.tableRow:hover {
+  background-color: #FAF7F4;
+}
+
+.queueStatusPending {
+  background-color: #E5DDD5;
+  color: #3E3E3E;
+}
+
+.queueStatusRunning {
+  background-color: #A5C4D4;
+  color: white;
+}
+
+.queueStatusCompleted {
+  background-color: #A8C5A0;
+  color: white;
+}
+
+.queueStatusFailed {
+  background-color: #D4A5A5;
+  color: white;
+}
+
+.taskStatusPending {
+  background-color: #E5DDD5;
+  color: #3E3E3E;
+}
+
+.taskStatusProgress {
+  background-color: #A5C4D4;
+  color: white;
+}
+
+.taskStatusCompleted {
+  background-color: #A8C5A0;
+  color: white;
+}
+
+.taskStatusFailed {
+  background-color: #D4A5A5;
+  color: white;
+}
+
+.btnPrimary {
+  background-color: #D4A574;
+  color: white;
+  transition: all 0.2s;
+}
+
+.btnPrimary:hover {
+  background-color: #C9A882;
+  box-shadow: 0 4px 12px rgba(212, 165, 116, 0.3);
+}
+
+.btnSecondary {
+  background-color: #F5EBE0;
+  color: #3E3E3E;
+  transition: all 0.2s;
+}
+
+.btnSecondary:hover {
+  background-color: #E8D5C4;
+}
+
+.btnDanger {
+  background-color: #D4A5A5;
+  color: white;
+  transition: all 0.2s;
+}
+
+.btnDanger:hover {
+  background-color: #C99A9A;
+}
+
+.btnWarning {
+  background-color: #E8C4A0;
+  color: white;
+  transition: all 0.2s;
+}
+
+.btnWarning:hover {
+  background-color: #DDA87A;
+}
+
+.inputFocus:focus {
+  outline: none;
+  border-color: #D4A574;
+  box-shadow: 0 0 0 3px rgba(212, 165, 116, 0.1);
+}
+
+.queueExpanded {
+  background-color: #FAF7F4;
+  border-left: 3px solid #D4A574;
+}
+
+.dragHandle {
+  cursor: grab;
+  transition: all 0.2s;
+}
+
+.dragHandle:active {
+  cursor: grabbing;
+}
+
+.progressBar {
+  background-color: #E5DDD5;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.progressFill {
+  background-color: #D4A574;
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.tooltip {
+  position: relative;
+}
+
+.tooltip:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #3E3E3E;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  z-index: 1000;
+}
+
+.tooltip:hover::before {
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: #3E3E3E;
+  z-index: 1000;
+}
+
