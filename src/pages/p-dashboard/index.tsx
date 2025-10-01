@@ -1,17 +1,41 @@
 
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import styles from './styles.module.css';
+import { getDashboardOverview, WorkspaceSummary, RecentActivity } from '../../services/dashboardService';
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
+  const [recentActivities, setRecentActivities] = useState<RecentActivity[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const originalTitle = document.title;
     document.title = '仪表盘 - Axis';
     return () => { document.title = originalTitle; };
   }, []);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
+
+  const fetchDashboardData = async () => {
+    try {
+      setLoading(true);
+      const data = await getDashboardOverview();
+      setWorkspaces(data.workspace_summary || []);
+      setRecentActivities(data.recent_activities || []);
+      setError(null);
+    } catch (err: any) {
+      console.error('Failed to fetch dashboard data:', err);
+      setError('加载仪表盘数据失败');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleWorkspaceCardClick = (workspaceId: string) => {
     navigate(`/wks-detail?workspaceId=${workspaceId}`);
@@ -133,94 +157,57 @@ const Dashboard: React.FC = () => {
           {/* 工作区概览卡片 */}
           <div className="mb-8">
             <h2 className="text-xl font-semibold text-textPrimary mb-4">工作区概览</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {/* 工作区卡片 1 */}
-              <div 
-                className={`${styles.workspaceCard} bg-surface rounded-card shadow-card p-6 cursor-pointer transition-all duration-200`}
-                onClick={() => handleWorkspaceCardClick('1')}
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
-                    <i className="fas fa-rocket text-white"></i>
-                  </div>
-                  <span className={`${styles.statusProgress} px-3 py-1 rounded-full text-xs font-medium`}>活跃</span>
-                </div>
-                <h3 className="text-lg font-semibold text-textPrimary mb-2">项目Alpha</h3>
-                <p className="text-sm text-textSecondary mb-4">核心功能开发与系统测试</p>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-textSecondary">待处理任务</span>
-                    <span className="font-medium text-textPrimary">3</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-textSecondary">进行中任务</span>
-                    <span className="font-medium text-textPrimary">2</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-textSecondary">已完成任务</span>
-                    <span className="font-medium text-success">8</span>
-                  </div>
-                </div>
-              </div>
+            {loading ? (
+              <div className="text-center py-8 text-textSecondary">加载中...</div>
+            ) : error ? (
+              <div className="text-center py-8 text-danger">{error}</div>
+            ) : workspaces.length === 0 ? (
+              <div className="text-center py-8 text-textSecondary">暂无工作区</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {workspaces.map((workspace, index) => {
+                  const icons = ['fa-rocket', 'fa-database', 'fa-mobile-alt', 'fa-code', 'fa-chart-line'];
+                  const colors = ['bg-primary', 'bg-info', 'bg-warning', 'bg-success', 'bg-accent'];
+                  const iconClass = icons[index % icons.length];
+                  const colorClass = colors[index % colors.length];
+                  const hasActiveTasks = workspace.pending_tasks + workspace.progress_tasks > 0;
+                  const isCompleted = workspace.completed_tasks > 0 && !hasActiveTasks;
 
-              {/* 工作区卡片 2 */}
-              <div 
-                className={`${styles.workspaceCard} bg-surface rounded-card shadow-card p-6 cursor-pointer transition-all duration-200`}
-                onClick={() => handleWorkspaceCardClick('2')}
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="w-10 h-10 bg-info rounded-lg flex items-center justify-center">
-                    <i className="fas fa-database text-white"></i>
-                  </div>
-                  <span className={`${styles.statusPending} px-3 py-1 rounded-full text-xs font-medium`}>准备中</span>
-                </div>
-                <h3 className="text-lg font-semibold text-textPrimary mb-2">数据分析平台</h3>
-                <p className="text-sm text-textSecondary mb-4">构建实时数据处理和可视化系统</p>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-textSecondary">待处理任务</span>
-                    <span className="font-medium text-textPrimary">5</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-textSecondary">进行中任务</span>
-                    <span className="font-medium text-textPrimary">1</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-textSecondary">已完成任务</span>
-                    <span className="font-medium text-success">2</span>
-                  </div>
-                </div>
+                  return (
+                    <div
+                      key={workspace.id}
+                      className={`${styles.workspaceCard} bg-surface rounded-card shadow-card p-6 cursor-pointer transition-all duration-200`}
+                      onClick={() => handleWorkspaceCardClick(workspace.id)}
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <div className={`w-10 h-10 ${colorClass} rounded-lg flex items-center justify-center`}>
+                          <i className={`fas ${iconClass} text-white`}></i>
+                        </div>
+                        <span className={`${hasActiveTasks ? styles.statusProgress : isCompleted ? styles.statusCompleted : styles.statusPending} px-3 py-1 rounded-full text-xs font-medium`}>
+                          {hasActiveTasks ? '活跃' : isCompleted ? '已完成' : '准备中'}
+                        </span>
+                      </div>
+                      <h3 className="text-lg font-semibold text-textPrimary mb-2">{workspace.name}</h3>
+                      <p className="text-sm text-textSecondary mb-4">{workspace.description}</p>
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-textSecondary">待处理任务</span>
+                          <span className="font-medium text-textPrimary">{workspace.pending_tasks}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-textSecondary">进行中任务</span>
+                          <span className="font-medium text-textPrimary">{workspace.progress_tasks}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-textSecondary">已完成任务</span>
+                          <span className="font-medium text-success">{workspace.completed_tasks}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-
-              {/* 工作区卡片 3 */}
-              <div 
-                className={`${styles.workspaceCard} bg-surface rounded-card shadow-card p-6 cursor-pointer transition-all duration-200`}
-                onClick={() => handleWorkspaceCardClick('3')}
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="w-10 h-10 bg-warning rounded-lg flex items-center justify-center">
-                    <i className="fas fa-mobile-alt text-white"></i>
-                  </div>
-                  <span className={`${styles.statusCompleted} px-3 py-1 rounded-full text-xs font-medium`}>已完成</span>
-                </div>
-                <h3 className="text-lg font-semibold text-textPrimary mb-2">移动应用重构</h3>
-                <p className="text-sm text-textSecondary mb-4">使用新架构重写移动端应用</p>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-textSecondary">待处理任务</span>
-                    <span className="font-medium text-textPrimary">0</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-textSecondary">进行中任务</span>
-                    <span className="font-medium text-textPrimary">0</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-textSecondary">已完成任务</span>
-                    <span className="font-medium text-success">15</span>
-                  </div>
-                </div>
-              </div>
-            </div>
+            )}
           </div>
 
           {/* 近期活动 */}
@@ -230,90 +217,42 @@ const Dashboard: React.FC = () => {
               <Link to="/notif-center" className="text-sm text-primary hover:underline">查看全部</Link>
             </div>
             <div className="bg-surface rounded-card shadow-card overflow-hidden">
-              {/* 活动项 1 */}
-              <div 
-                className={`${styles.activityItem} flex items-center p-4 border-b border-border transition-colors cursor-pointer`}
-                onClick={handleActivityItemClick}
-              >
-                <div className="w-10 h-10 bg-success rounded-full flex items-center justify-center mr-4">
-                  <i className="fas fa-check text-white text-sm"></i>
-                </div>
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-textPrimary">任务"实现用户认证模块"已完成</div>
-                  <div className="text-xs text-textSecondary">2小时前 · 项目Alpha</div>
-                </div>
-                <div className="text-right">
-                  <span className={`${styles.statusCompleted} px-3 py-1 rounded-full text-xs font-medium`}>已完成</span>
-                </div>
-              </div>
+              {recentActivities.length === 0 ? (
+                <div className="text-center py-8 text-textSecondary">暂无近期活动</div>
+              ) : (
+                recentActivities.map((activity, index) => {
+                  const isLast = index === recentActivities.length - 1;
+                  const getIconAndColor = (type: string) => {
+                    switch (type) {
+                      case 'success': return { icon: 'fa-check', color: 'bg-success' };
+                      case 'error': return { icon: 'fa-exclamation', color: 'bg-danger' };
+                      case 'info': return { icon: 'fa-info', color: 'bg-info' };
+                      case 'warning': return { icon: 'fa-exclamation-triangle', color: 'bg-warning' };
+                      default: return { icon: 'fa-bell', color: 'bg-primary' };
+                    }
+                  };
+                  const { icon, color } = getIconAndColor(activity.type);
 
-              {/* 活动项 2 */}
-              <div 
-                className={`${styles.activityItem} flex items-center p-4 border-b border-border transition-colors cursor-pointer`}
-                onClick={handleActivityItemClick}
-              >
-                <div className="w-10 h-10 bg-danger rounded-full flex items-center justify-center mr-4">
-                  <i className="fas fa-exclamation text-white text-sm"></i>
-                </div>
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-textPrimary">任务"单元测试覆盖率提升"执行失败</div>
-                  <div className="text-xs text-textSecondary">4小时前 · 项目Alpha</div>
-                </div>
-                <div className="text-right">
-                  <button className="text-xs text-primary hover:underline" onClick={handleRetryTask}>重试</button>
-                </div>
-              </div>
-
-              {/* 活动项 3 */}
-              <div 
-                className={`${styles.activityItem} flex items-center p-4 border-b border-border transition-colors cursor-pointer`}
-                onClick={handleActivityItemClick}
-              >
-                <div className="w-10 h-10 bg-info rounded-full flex items-center justify-center mr-4">
-                  <i className="fas fa-plus text-white text-sm"></i>
-                </div>
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-textPrimary">从API获取了3个新任务</div>
-                  <div className="text-xs text-textSecondary">6小时前 · 数据分析平台</div>
-                </div>
-                <div className="text-right">
-                  <span className={`${styles.statusProgress} px-3 py-1 rounded-full text-xs font-medium`}>已添加</span>
-                </div>
-              </div>
-
-              {/* 活动项 4 */}
-              <div 
-                className={`${styles.activityItem} flex items-center p-4 border-b border-border transition-colors cursor-pointer`}
-                onClick={handleActivityItemClick}
-              >
-                <div className="w-10 h-10 bg-primary rounded-full flex items-center justify-center mr-4">
-                  <i className="fas fa-play text-white text-sm"></i>
-                </div>
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-textPrimary">任务队列"数据处理流程"已启动</div>
-                  <div className="text-xs text-textSecondary">1天前 · 数据分析平台</div>
-                </div>
-                <div className="text-right">
-                  <span className={`${styles.statusProgress} px-3 py-1 rounded-full text-xs font-medium`}>执行中</span>
-                </div>
-              </div>
-
-              {/* 活动项 5 */}
-              <div 
-                className={`${styles.activityItem} flex items-center p-4 transition-colors cursor-pointer`}
-                onClick={handleActivityItemClick}
-              >
-                <div className="w-10 h-10 bg-warning rounded-full flex items-center justify-center mr-4">
-                  <i className="fas fa-edit text-white text-sm"></i>
-                </div>
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-textPrimary">工作区"移动应用重构"项目目标已更新</div>
-                  <div className="text-xs text-textSecondary">2天前</div>
-                </div>
-                <div className="text-right">
-                  <span className={`${styles.statusCompleted} px-3 py-1 rounded-full text-xs font-medium`}>已更新</span>
-                </div>
-              </div>
+                  return (
+                    <div
+                      key={activity.id}
+                      className={`${styles.activityItem} flex items-center p-4 ${!isLast ? 'border-b border-border' : ''} transition-colors cursor-pointer`}
+                      onClick={handleActivityItemClick}
+                    >
+                      <div className={`w-10 h-10 ${color} rounded-full flex items-center justify-center mr-4`}>
+                        <i className={`fas ${icon} text-white text-sm`}></i>
+                      </div>
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-textPrimary">{activity.title}</div>
+                        <div className="text-xs text-textSecondary">{activity.message}</div>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xs text-textSecondary">{activity.created_at}</span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
 
