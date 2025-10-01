@@ -27,6 +27,7 @@ const errorLoggerPlugin = () => ({
 export default defineConfig(({ mode }) => ({
   plugins: [react(), mode === 'development' ? errorLoggerPlugin() : null,],
   server: {
+    port: 10102,
     allowedHosts: true,
   },
 }));

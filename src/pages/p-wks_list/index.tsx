@@ -3,23 +3,20 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import styles from './styles.module.css';
-
-interface Workspace {
-  id: string;
-  name: string;
-  type: string;
-  goal: string;
-  activeTasks: number;
-  completedTasks: number;
-  createdAt: string;
-  icon: string;
-  iconColor: string;
-}
+import {
+  getWorkspaces,
+  createWorkspace,
+  updateWorkspace,
+  deleteWorkspace,
+  Workspace,
+  WorkspaceCreateInput,
+  WorkspaceUpdateInput
+} from '../../services/workspaceService';
 
 interface WorkspaceFormData {
   name: string;
-  type: string;
-  goal: string;
+  description: string;
+  project_goal: string;
 }
 
 const WorkspaceListPage: React.FC = () => {
@@ -37,73 +34,43 @@ const WorkspaceListPage: React.FC = () => {
   const [currentDeletingWorkspaceName, setCurrentDeletingWorkspaceName] = useState('');
   const [workspaceFormData, setWorkspaceFormData] = useState<WorkspaceFormData>({
     name: '',
-    type: 'web',
-    goal: ''
+    description: '',
+    project_goal: ''
   });
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string>('');
 
-  // 模拟工作区数据
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([
-    {
-      id: '1',
-      name: '项目Alpha',
-      type: 'Web开发',
-      goal: '完成核心功能开发并进行系统测试',
-      activeTasks: 8,
-      completedTasks: 12,
-      createdAt: '2024-01-10 14:30',
-      icon: 'fas fa-code',
-      iconColor: 'bg-primary'
-    },
-    {
-      id: '2',
-      name: '移动应用Beta',
-      type: '移动开发',
-      goal: '开发跨平台移动应用原型',
-      activeTasks: 5,
-      completedTasks: 3,
-      createdAt: '2024-01-08 09:15',
-      icon: 'fas fa-mobile-alt',
-      iconColor: 'bg-success'
-    },
-    {
-      id: '3',
-      name: '数据分析平台',
-      type: '数据工程',
-      goal: '构建实时数据分析管道',
-      activeTasks: 12,
-      completedTasks: 6,
-      createdAt: '2024-01-05 16:45',
-      icon: 'fas fa-database',
-      iconColor: 'bg-info'
-    },
-    {
-      id: '4',
-      name: 'AI助手项目',
-      type: '机器学习',
-      goal: '开发智能对话助手',
-      activeTasks: 3,
-      completedTasks: 15,
-      createdAt: '2024-01-01 11:20',
-      icon: 'fas fa-robot',
-      iconColor: 'bg-warning'
-    },
-    {
-      id: '5',
-      name: '云基础设施',
-      type: 'DevOps',
-      goal: '搭建高可用云服务架构',
-      activeTasks: 7,
-      completedTasks: 9,
-      createdAt: '2023-12-28 13:50',
-      icon: 'fas fa-cloud',
-      iconColor: 'bg-accent'
+  // 获取工作区列表
+  const fetchWorkspaces = async () => {
+    try {
+      setLoading(true);
+      setErrorMessage('');
+      const response = await getWorkspaces();
+      setWorkspaces(response.workspaces);
+    } catch (error) {
+      console.error('Failed to fetch workspaces:', error);
+      setErrorMessage('加载工作区列表失败');
+    } finally {
+      setLoading(false);
     }
-  ]);
+  };
 
-  // 设置页面标题
+  // 显示成功消息
+  const showSuccessMessage = (message: string) => {
+    alert(message);
+  };
+
+  // 显示错误消息
+  const showErrorMessage = (message: string) => {
+    alert(message);
+  };
+
+  // 设置页面标题和加载数据
   useEffect(() => {
     const originalTitle = document.title;
     document.title = '工作区列表 - Axis';
+    fetchWorkspaces();
     return () => { document.title = originalTitle; };
   }, []);
 
@@ -139,8 +106,8 @@ const WorkspaceListPage: React.FC = () => {
     setCurrentEditingWorkspaceId(null);
     setWorkspaceFormData({
       name: '',
-      type: 'web',
-      goal: ''
+      description: '',
+      project_goal: ''
     });
     setShowWorkspaceModal(true);
     document.body.style.overflow = 'hidden';
@@ -151,18 +118,10 @@ const WorkspaceListPage: React.FC = () => {
     setCurrentEditingWorkspaceId(workspaceId);
     const workspace = workspaces.find(w => w.id === workspaceId);
     if (workspace) {
-      const typeMap: { [key: string]: string } = {
-        'Web开发': 'web',
-        '移动开发': 'mobile',
-        '数据工程': 'data',
-        '机器学习': 'ai',
-        'DevOps': 'devops',
-        '其他': 'other'
-      };
       setWorkspaceFormData({
         name: workspace.name,
-        type: typeMap[workspace.type] || 'other',
-        goal: workspace.goal
+        description: workspace.description || '',
+        project_goal: workspace.project_goal
       });
     }
     setShowWorkspaceModal(true);
@@ -193,68 +152,61 @@ const WorkspaceListPage: React.FC = () => {
   };
 
   // 保存工作区
-  const handleSaveWorkspace = (e: React.FormEvent) => {
+  const handleSaveWorkspace = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!workspaceFormData.name.trim()) {
-      alert('请输入工作区名称');
+      showErrorMessage('请输入工作区名称');
       return;
     }
-    
-    const typeMap: { [key: string]: string } = {
-      'web': 'Web开发',
-      'mobile': '移动开发',
-      'data': '数据工程',
-      'ai': '机器学习',
-      'devops': 'DevOps',
-      'other': '其他'
-    };
 
-    if (currentEditingWorkspaceId) {
-      // 编辑现有工作区
-      setWorkspaces(prevWorkspaces => 
-        prevWorkspaces.map(workspace => 
-          workspace.id === currentEditingWorkspaceId
-            ? {
-                ...workspace,
-                name: workspaceFormData.name,
-                type: typeMap[workspaceFormData.type],
-                goal: workspaceFormData.goal
-              }
-            : workspace
-        )
-      );
-      alert('工作区更新成功');
-    } else {
-      // 创建新工作区
-      const newWorkspace: Workspace = {
-        id: Date.now().toString(),
-        name: workspaceFormData.name,
-        type: typeMap[workspaceFormData.type],
-        goal: workspaceFormData.goal,
-        activeTasks: 0,
-        completedTasks: 0,
-        createdAt: new Date().toLocaleString(),
-        icon: 'fas fa-folder',
-        iconColor: 'bg-primary'
-      };
-      
-      setWorkspaces(prevWorkspaces => [...prevWorkspaces, newWorkspace]);
-      alert('工作区创建成功');
+    if (!workspaceFormData.project_goal.trim()) {
+      showErrorMessage('请输入项目目标');
+      return;
     }
-    
-    handleCloseWorkspaceModal();
+
+    try {
+      if (currentEditingWorkspaceId) {
+        // 编辑现有工作区
+        const updateData: WorkspaceUpdateInput = {
+          name: workspaceFormData.name,
+          description: workspaceFormData.description,
+          project_goal: workspaceFormData.project_goal
+        };
+        await updateWorkspace(currentEditingWorkspaceId, updateData);
+        showSuccessMessage('工作区更新成功');
+      } else {
+        // 创建新工作区
+        const createData: WorkspaceCreateInput = {
+          name: workspaceFormData.name,
+          description: workspaceFormData.description,
+          project_goal: workspaceFormData.project_goal
+        };
+        await createWorkspace(createData);
+        showSuccessMessage('工作区创建成功');
+      }
+
+      handleCloseWorkspaceModal();
+      await fetchWorkspaces();
+    } catch (error) {
+      console.error('Failed to save workspace:', error);
+      showErrorMessage('保存工作区失败');
+    }
   };
 
   // 删除工作区
-  const handleDeleteWorkspace = () => {
+  const handleDeleteWorkspace = async () => {
     if (currentDeletingWorkspaceId) {
-      setWorkspaces(prevWorkspaces => 
-        prevWorkspaces.filter(workspace => workspace.id !== currentDeletingWorkspaceId)
-      );
-      alert('工作区删除成功');
+      try {
+        await deleteWorkspace(currentDeletingWorkspaceId);
+        showSuccessMessage('工作区删除成功');
+        handleCloseDeleteModal();
+        await fetchWorkspaces();
+      } catch (error) {
+        console.error('Failed to delete workspace:', error);
+        showErrorMessage('删除工作区失败');
+      }
     }
-    handleCloseDeleteModal();
   };
 
   // 处理工作区名称点击
@@ -412,11 +364,36 @@ const WorkspaceListPage: React.FC = () => {
             </div>
           </div>
 
+          {/* 错误消息 */}
+          {errorMessage && (
+            <div className="bg-danger text-white px-4 py-3 rounded-card mb-6">
+              <i className="fas fa-exclamation-circle mr-2"></i>
+              {errorMessage}
+            </div>
+          )}
+
           {/* 工作区列表 */}
           <div className="bg-surface rounded-card shadow-card overflow-hidden">
-            {/* 表格 */}
-            <div className="overflow-x-auto">
-              <table className="w-full">
+            {/* 加载状态 */}
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-center">
+                  <i className="fas fa-spinner fa-spin text-3xl text-primary mb-4"></i>
+                  <p className="text-textSecondary">加载中...</p>
+                </div>
+              </div>
+            ) : filteredWorkspaces.length === 0 ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-center">
+                  <i className="fas fa-folder-open text-4xl text-textSecondary mb-4"></i>
+                  <p className="text-textSecondary">暂无工作区</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* 表格 */}
+                <div className="overflow-x-auto">
+                  <table className="w-full">
                 <thead className="bg-tertiary border-b border-border">
                   <tr>
                     <th className="px-4 py-3 text-left text-sm font-medium text-textSecondary">
@@ -465,35 +442,35 @@ const WorkspaceListPage: React.FC = () => {
                   {filteredWorkspaces.map((workspace) => (
                     <tr key={workspace.id} className={`${styles.tableRow} border-b border-border`}>
                       <td className="px-4 py-3">
-                        <div 
+                        <div
                           className="flex items-center space-x-3 cursor-pointer hover:text-primary transition-colors"
                           onClick={() => handleWorkspaceNameClick(workspace.id)}
                         >
-                          <div className={`w-10 h-10 ${workspace.iconColor} rounded-lg flex items-center justify-center`}>
-                            <i className={`${workspace.icon} text-white text-sm`}></i>
+                          <div className={`w-10 h-10 ${workspace.icon_color || 'bg-primary'} rounded-lg flex items-center justify-center`}>
+                            <i className={`${workspace.icon || 'fas fa-folder'} text-white text-sm`}></i>
                           </div>
                           <div>
                             <div className="text-sm font-medium text-textPrimary">{workspace.name}</div>
-                            <div className="text-xs text-textSecondary">{workspace.type}</div>
+                            <div className="text-xs text-textSecondary">{workspace.description || '无描述'}</div>
                           </div>
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <div 
-                          className="text-sm text-textPrimary max-w-xs truncate" 
-                          title={workspace.goal}
+                        <div
+                          className="text-sm text-textPrimary max-w-xs truncate"
+                          title={workspace.project_goal}
                         >
-                          {workspace.goal}
+                          {workspace.project_goal}
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <span className="text-sm font-medium text-textPrimary">{workspace.activeTasks}</span>
+                        <span className="text-sm font-medium text-textPrimary">{workspace.active_tasks || 0}</span>
                       </td>
                       <td className="px-4 py-3">
-                        <span className="text-sm font-medium text-textPrimary">{workspace.completedTasks}</span>
+                        <span className="text-sm font-medium text-textPrimary">{workspace.completed_tasks || 0}</span>
                       </td>
                       <td className="px-4 py-3">
-                        <span className="text-sm text-textSecondary">{workspace.createdAt}</span>
+                        <span className="text-sm text-textSecondary">{new Date(workspace.created_at).toLocaleString('zh-CN')}</span>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-center space-x-2">
@@ -556,6 +533,8 @@ const WorkspaceListPage: React.FC = () => {
                 <span className="text-sm text-textSecondary">条</span>
               </div>
             </div>
+              </>
+            )}
           </div>
         </main>
       </div>
@@ -589,10 +568,10 @@ const WorkspaceListPage: React.FC = () => {
                   <label htmlFor="workspace-name" className="block text-sm font-medium text-textPrimary">
                     工作区名称 *
                   </label>
-                  <input 
-                    type="text" 
-                    id="workspace-name" 
-                    name="name" 
+                  <input
+                    type="text"
+                    id="workspace-name"
+                    name="name"
                     value={workspaceFormData.name}
                     onChange={handleFormInputChange}
                     className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus}`}
@@ -601,40 +580,36 @@ const WorkspaceListPage: React.FC = () => {
                   />
                 </div>
 
-                {/* 工作区类型 */}
-                <div className="space-y-2">
-                  <label htmlFor="workspace-type" className="block text-sm font-medium text-textPrimary">
-                    工作区类型
-                  </label>
-                  <select 
-                    id="workspace-type" 
-                    name="type" 
-                    value={workspaceFormData.type}
-                    onChange={handleFormInputChange}
-                    className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus}`}
-                  >
-                    <option value="web">Web开发</option>
-                    <option value="mobile">移动开发</option>
-                    <option value="data">数据工程</option>
-                    <option value="ai">机器学习</option>
-                    <option value="devops">DevOps</option>
-                    <option value="other">其他</option>
-                  </select>
-                </div>
-
                 {/* 项目目标 */}
                 <div className="space-y-2">
                   <label htmlFor="project-goal" className="block text-sm font-medium text-textPrimary">
-                    项目目标
+                    项目目标 *
                   </label>
-                  <textarea 
-                    id="project-goal" 
-                    name="goal" 
+                  <textarea
+                    id="project-goal"
+                    name="project_goal"
                     rows={3}
-                    value={workspaceFormData.goal}
+                    value={workspaceFormData.project_goal}
                     onChange={handleFormInputChange}
                     className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus} resize-none`}
                     placeholder="请描述项目的主要目标..."
+                    required
+                  ></textarea>
+                </div>
+
+                {/* 描述 */}
+                <div className="space-y-2">
+                  <label htmlFor="description" className="block text-sm font-medium text-textPrimary">
+                    描述
+                  </label>
+                  <textarea
+                    id="description"
+                    name="description"
+                    rows={2}
+                    value={workspaceFormData.description}
+                    onChange={handleFormInputChange}
+                    className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus} resize-none`}
+                    placeholder="请输入描述..."
                   ></textarea>
                 </div>
               </form>
