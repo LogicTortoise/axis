@@ -1,4 +1,60 @@
-# React + TypeScript + Vite
+# Axis - AI任务管理系统
+
+一个基于React + TypeScript + Python的AI任务管理和执行系统，支持任务队列、实时消息流和执行日志记录。
+
+## 🚀 快速开始
+
+### 端口配置
+
+- **前端**: http://localhost:10102
+- **后端API**: http://localhost:10101
+- **数据库**: SQLite (axis.db)
+
+### 启动服务
+
+#### 前端 (React + Vite)
+```bash
+npm install
+npm run dev
+```
+
+#### 后端 (Python FastAPI)
+```bash
+cd python-backend
+python3 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+python3 run.py
+```
+
+## 📦 技术栈
+
+### 前端
+- React 19.1.0
+- TypeScript
+- Vite 7.0.3
+- React Router DOM
+- Axios
+- Tailwind CSS
+
+### 后端
+- Python 3.12
+- FastAPI
+- SQLAlchemy
+- SQLite
+- Claude Agent SDK
+
+## ✨ 主要功能
+
+- 📋 工作区和任务管理
+- 🤖 AI任务自动执行 (Claude Agent)
+- 📊 任务队列管理
+- 🔄 实时消息流 (SSE)
+- 📝 执行日志记录和查看
+- 🔗 Webhook集成 (Start/Stop Hooks)
+- 🔔 通知中心
+
+## 🛠️ 开发说明
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 

@@ -3,6 +3,7 @@ from app.models.task import Task
 from app.models.hook import HookConfig
 from app.models.queue import TaskQueue, QueueTask
 from app.models.notification import Notification
+from app.models.task_execution_log import TaskExecutionLog
 
 __all__ = [
     "Workspace",
@@ -10,5 +11,6 @@ __all__ = [
     "HookConfig",
     "TaskQueue",
     "QueueTask",
-    "Notification"
+    "Notification",
+    "TaskExecutionLog"
 ]

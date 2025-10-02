@@ -32,3 +32,14 @@ export interface ToastState {
   type: 'success' | 'error' | 'warning';
 }
 
+export interface ExecutionLog {
+  id: string;
+  task_id: string;
+  execution_number: number;
+  response_type: string;
+  response_content: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+

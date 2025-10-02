@@ -15,6 +15,18 @@ import {
   TaskUpdateInput,
   TaskListParams
 } from '../../services/taskService';
+import axios from 'axios';
+
+interface ExecutionLog {
+  id: string;
+  task_id: string;
+  execution_number: number;
+  response_type: string;
+  response_content: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
 
 const WorkspaceDetailPage: React.FC = () => {
   const navigate = useNavigate();
@@ -64,6 +76,19 @@ const WorkspaceDetailPage: React.FC = () => {
   });
 
   const [taskDrawerData, setTaskDrawerData] = useState<Task | null>(null);
+
+  // 执行日志相关状态
+  const [executionLogs, setExecutionLogs] = useState<ExecutionLog[]>([]);
+  const [selectedLog, setSelectedLog] = useState<ExecutionLog | null>(null);
+  const [showExecutionLogModal, setShowExecutionLogModal] = useState<boolean>(false);
+
+  // IDE模式展开状态
+  const [showIDEMode, setShowIDEMode] = useState<boolean>(false);
+  const [activeLeftTab, setActiveLeftTab] = useState<'files' | 'diff'>('files');
+  const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
+  const [taskDiff, setTaskDiff] = useState<string>('');
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [chatInput, setChatInput] = useState<string>('');
 
   // 设置页面标题
   useEffect(() => {
@@ -195,6 +220,56 @@ const WorkspaceDetailPage: React.FC = () => {
     }
   };
 
+  // 加载执行日志
+  const loadExecutionLogs = async (taskId: string) => {
+    try {
+      const response = await axios.get(`http://localhost:10101/api/tasks/${taskId}/execution-logs`);
+      if (response.data.code === 200 && response.data.data) {
+        setExecutionLogs(response.data.data);
+      } else {
+        setExecutionLogs([]);
+      }
+    } catch (error) {
+      console.error('加载执行日志失败:', error);
+      setExecutionLogs([]);
+    }
+  };
+
+  // 加载workspace文件列表
+  const loadWorkspaceFiles = async () => {
+    try {
+      const response = await axios.get(`http://localhost:10101/api/workspaces/${currentWorkspaceId}/files`);
+      if (response.data.code === 200) {
+        setWorkspaceFiles(response.data.data || []);
+      }
+    } catch (error) {
+      console.error('加载文件列表失败:', error);
+      setWorkspaceFiles([]);
+    }
+  };
+
+  // 加载task diff
+  const loadTaskDiff = async (taskId: string) => {
+    try {
+      const response = await axios.get(`http://localhost:10101/api/tasks/${taskId}/diff`);
+      if (response.data.code === 200) {
+        setTaskDiff(response.data.data || '');
+      }
+    } catch (error) {
+      console.error('加载diff失败:', error);
+      setTaskDiff('');
+    }
+  };
+
+  // 打开IDE模式
+  const handleOpenIDEMode = async () => {
+    if (!currentTaskId) return;
+    setShowIDEMode(true);
+    // 加载数据
+    await loadWorkspaceFiles();
+    await loadTaskDiff(currentTaskId);
+  };
+
   // 打开任务详情抽屉
   const openTaskDrawer = async (taskId: string) => {
     try {
@@ -203,6 +278,8 @@ const WorkspaceDetailPage: React.FC = () => {
       setTaskDrawerData(task);
       setShowTaskDrawer(true);
       document.body.style.overflow = 'hidden';
+      // 加载执行日志
+      await loadExecutionLogs(taskId);
     } catch (error) {
       console.error('Failed to fetch task:', error);
       showErrorMessage('加载任务详情失败');
@@ -215,6 +292,21 @@ const WorkspaceDetailPage: React.FC = () => {
     document.body.style.overflow = 'auto';
     setCurrentTaskId(null);
     setTaskDrawerData(null);
+    setExecutionLogs([]);
+    setSelectedLog(null);
+    setShowExecutionLogModal(false);
+  };
+
+  // 打开执行日志详情模态框
+  const openExecutionLogModal = (log: ExecutionLog) => {
+    setSelectedLog(log);
+    setShowExecutionLogModal(true);
+  };
+
+  // 关闭执行日志详情模态框
+  const closeExecutionLogModal = () => {
+    setShowExecutionLogModal(false);
+    setSelectedLog(null);
   };
 
   // 保存任务
@@ -941,9 +1033,21 @@ const WorkspaceDetailPage: React.FC = () => {
           <div className={styles.drawerContent} onClick={(e) => e.stopPropagation()}>
             <div className="sticky top-0 bg-surface border-b border-border px-6 py-4 flex items-center justify-between z-10">
               <h2 className="text-lg font-semibold text-textPrimary">任务详情</h2>
-              <button onClick={closeTaskDrawer} className="p-2 hover:bg-tertiary rounded-button transition-colors">
-                <i className="fas fa-times text-textSecondary"></i>
-              </button>
+              <div className="flex items-center space-x-2">
+                {/* 展开按钮 - 只对非待执行状态的任务显示 */}
+                {taskDrawerData && taskDrawerData.status !== 'pending' && (
+                  <button
+                    onClick={handleOpenIDEMode}
+                    className="p-2 hover:bg-tertiary rounded-button transition-colors border-2 border-pink-300"
+                    title="展开IDE模式"
+                  >
+                    <i className="fas fa-expand text-textSecondary"></i>
+                  </button>
+                )}
+                <button onClick={closeTaskDrawer} className="p-2 hover:bg-tertiary rounded-button transition-colors">
+                  <i className="fas fa-times text-textSecondary"></i>
+                </button>
+              </div>
             </div>
             <div className="p-6 space-y-6">
               <div className="space-y-4">
@@ -1003,6 +1107,59 @@ const WorkspaceDetailPage: React.FC = () => {
                     <div className="w-11 h-6 bg-border rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-border after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                   </label>
                 </div>
+              </div>
+
+              {/* 执行历史记录 */}
+              <div className="space-y-4 border-2 border-pink-300 rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-textSecondary uppercase tracking-wider">执行历史记录</h3>
+                  <button
+                    onClick={() => currentTaskId && loadExecutionLogs(currentTaskId)}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    刷新
+                  </button>
+                </div>
+
+                {executionLogs.length === 0 ? (
+                  <div className="text-sm text-textSecondary text-center py-4">暂无执行记录</div>
+                ) : (
+                  <div className="space-y-2">
+                    {executionLogs.map((log) => (
+                      <div
+                        key={log.id}
+                        onClick={() => openExecutionLogModal(log)}
+                        className="p-3 bg-tertiary hover:bg-border rounded-lg cursor-pointer transition-colors"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-sm font-medium text-textPrimary">第 {log.execution_number} 次执行</span>
+                            <span className={`px-2 py-0.5 rounded-full text-xs ${
+                              log.response_type === 'completed' ? 'bg-success text-white' :
+                              log.response_type === 'failed' ? 'bg-danger text-white' :
+                              'bg-warning text-white'
+                            }`}>
+                              {log.response_type === 'completed' ? '成功' :
+                               log.response_type === 'failed' ? '失败' :
+                               log.response_type}
+                            </span>
+                          </div>
+                          <span className="text-xs text-textSecondary">{log.created_at}</span>
+                        </div>
+                        <div className="text-xs text-textSecondary line-clamp-2">
+                          {(() => {
+                            try {
+                              const messages = JSON.parse(log.response_content);
+                              return `${messages.length} 条消息`;
+                            } catch {
+                              return '点击查看详情';
+                            }
+                          })()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
             <div className="sticky bottom-0 bg-surface border-t border-border px-6 py-4 flex items-center space-x-3">
@@ -1210,6 +1367,239 @@ const WorkspaceDetailPage: React.FC = () => {
               >
                 取消
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Execution Log Detail Modal */}
+      {showExecutionLogModal && selectedLog && (
+        <div className="fixed inset-0 z-[60]">
+          <div className={styles.modalOverlay} onClick={closeExecutionLogModal}></div>
+          <div className={`${styles.modalContent} max-w-4xl max-h-[80vh] overflow-y-auto`} onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 bg-surface px-6 py-4 border-b border-border z-10">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <h3 className="text-lg font-semibold text-textPrimary">第 {selectedLog.execution_number} 次执行详情</h3>
+                  <span className={`px-2 py-0.5 rounded-full text-xs ${
+                    selectedLog.response_type === 'completed' ? 'bg-success text-white' :
+                    selectedLog.response_type === 'failed' ? 'bg-danger text-white' :
+                    'bg-warning text-white'
+                  }`}>
+                    {selectedLog.response_type === 'completed' ? '成功' :
+                     selectedLog.response_type === 'failed' ? '失败' :
+                     selectedLog.response_type}
+                  </span>
+                </div>
+                <button onClick={closeExecutionLogModal} className="p-2 hover:bg-tertiary rounded-button transition-colors">
+                  <i className="fas fa-times text-textSecondary"></i>
+                </button>
+              </div>
+              <div className="text-xs text-textSecondary mt-2">{selectedLog.created_at}</div>
+            </div>
+            <div className="px-6 py-4">
+              <div className="space-y-3">
+                {(() => {
+                  try {
+                    const messages = JSON.parse(selectedLog.response_content);
+                    return messages.map((msg: any, index: number) => (
+                      <div key={index} className="p-3 bg-tertiary rounded-lg">
+                        <div className="flex items-center space-x-2 mb-2">
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                            msg.type === 'text' ? 'bg-blue-100 text-blue-800' :
+                            msg.type === 'tool_use' ? 'bg-green-100 text-green-800' :
+                            msg.type === 'tool_result' ? 'bg-purple-100 text-purple-800' :
+                            'bg-gray-100 text-gray-800'
+                          }`}>
+                            {msg.type}
+                          </span>
+                          {msg.name && <span className="text-xs text-textSecondary">{msg.name}</span>}
+                        </div>
+                        <div className="text-sm text-textPrimary whitespace-pre-wrap break-words">
+                          {msg.text || msg.content || JSON.stringify(msg, null, 2)}
+                        </div>
+                      </div>
+                    ));
+                  } catch {
+                    return (
+                      <div className="p-3 bg-tertiary rounded-lg">
+                        <pre className="text-sm text-textPrimary whitespace-pre-wrap break-words overflow-x-auto">
+                          {selectedLog.response_content}
+                        </pre>
+                      </div>
+                    );
+                  }
+                })()}
+              </div>
+            </div>
+            <div className="sticky bottom-0 bg-surface px-6 py-4 border-t border-border">
+              <button
+                onClick={closeExecutionLogModal}
+                className={`w-full ${styles.btnSecondary} px-4 py-2 rounded-button text-sm font-medium`}
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* IDE Mode - 全屏4区域布局 */}
+      {showIDEMode && taskDrawerData && (
+        <div className="fixed inset-0 z-[70] bg-background">
+          {/* Header */}
+          <div className="h-14 bg-surface border-b border-border flex items-center justify-between px-6">
+            <div className="flex items-center space-x-3">
+              <i className="fas fa-code text-primary"></i>
+              <h2 className="text-lg font-semibold text-textPrimary">{taskDrawerData.title} - IDE模式</h2>
+            </div>
+            <button
+              onClick={() => setShowIDEMode(false)}
+              className="p-2 hover:bg-tertiary rounded-button transition-colors"
+            >
+              <i className="fas fa-times text-textSecondary"></i>
+            </button>
+          </div>
+
+          {/* 4区域布局 */}
+          <div className="h-[calc(100vh-56px)] grid grid-cols-2 gap-1 p-1">
+            {/* 左上：任务信息 */}
+            <div className="bg-surface rounded-lg border border-border overflow-auto">
+              <div className="p-4 border-b border-border">
+                <h3 className="text-sm font-medium text-textSecondary uppercase">任务信息</h3>
+              </div>
+              <div className="p-4 space-y-4">
+                <div>
+                  <label className="text-xs text-textSecondary">任务名称</label>
+                  <p className="text-sm text-textPrimary mt-1">{taskDrawerData.title}</p>
+                </div>
+                <div>
+                  <label className="text-xs text-textSecondary">任务描述</label>
+                  <p className="text-sm text-textPrimary mt-1">{taskDrawerData.description}</p>
+                </div>
+                <div className="flex space-x-4">
+                  <div>
+                    <label className="text-xs text-textSecondary">优先级</label>
+                    <p className="text-sm text-textPrimary mt-1">{taskDrawerData.priority}</p>
+                  </div>
+                  <div>
+                    <label className="text-xs text-textSecondary">状态</label>
+                    <p className="text-sm text-textPrimary mt-1">{taskDrawerData.status}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 右上：执行历史/对话记录 */}
+            <div className="bg-surface rounded-lg border border-border overflow-auto">
+              <div className="p-4 border-b border-border">
+                <h3 className="text-sm font-medium text-textSecondary uppercase">执行历史 & 对话记录</h3>
+              </div>
+              <div className="p-4 space-y-2">
+                {executionLogs.map((log) => (
+                  <div key={log.id} className="p-3 bg-tertiary rounded-lg">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-medium">第 {log.execution_number} 次执行</span>
+                      <span className={`px-2 py-0.5 rounded-full text-xs ${
+                        log.response_type === 'completed' ? 'bg-success text-white' : 'bg-danger text-white'
+                      }`}>
+                        {log.response_type === 'completed' ? '成功' : '失败'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-textSecondary">{log.created_at}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 左下：文件列表/Diff切换 */}
+            <div className="bg-surface rounded-lg border border-border overflow-hidden flex flex-col">
+              <div className="p-2 border-b border-border flex space-x-2">
+                <button
+                  onClick={() => setActiveLeftTab('files')}
+                  className={`px-3 py-1.5 rounded text-sm ${
+                    activeLeftTab === 'files' ? 'bg-primary text-white' : 'text-textSecondary hover:bg-tertiary'
+                  }`}
+                >
+                  文件列表
+                </button>
+                <button
+                  onClick={() => setActiveLeftTab('diff')}
+                  className={`px-3 py-1.5 rounded text-sm ${
+                    activeLeftTab === 'diff' ? 'bg-primary text-white' : 'text-textSecondary hover:bg-tertiary'
+                  }`}
+                >
+                  Diff
+                </button>
+              </div>
+              <div className="flex-1 overflow-auto p-4">
+                {activeLeftTab === 'files' ? (
+                  <div className="space-y-1">
+                    {workspaceFiles.length === 0 ? (
+                      <p className="text-sm text-textSecondary">暂无文件</p>
+                    ) : (
+                      workspaceFiles.map((file, idx) => (
+                        <div key={idx} className="text-sm text-textPrimary hover:bg-tertiary p-2 rounded cursor-pointer">
+                          <i className="fas fa-file-code mr-2 text-textSecondary"></i>
+                          {file}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                ) : (
+                  <pre className="text-xs text-textPrimary whitespace-pre-wrap">
+                    {taskDiff || '暂无diff数据'}
+                  </pre>
+                )}
+              </div>
+            </div>
+
+            {/* 右下：对话框 */}
+            <div className="bg-surface rounded-lg border border-border overflow-hidden flex flex-col">
+              <div className="p-4 border-b border-border">
+                <h3 className="text-sm font-medium text-textSecondary uppercase">持续对话</h3>
+              </div>
+              <div className="flex-1 overflow-auto p-4 space-y-2">
+                {chatMessages.length === 0 ? (
+                  <p className="text-sm text-textSecondary">开始对话...</p>
+                ) : (
+                  chatMessages.map((msg, idx) => (
+                    <div key={idx} className={`p-3 rounded-lg ${
+                      msg.role === 'user' ? 'bg-primary text-white ml-8' : 'bg-tertiary mr-8'
+                    }`}>
+                      <p className="text-sm">{msg.content}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="p-4 border-t border-border">
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="输入消息..."
+                    className={`flex-1 px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus}`}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' && chatInput.trim()) {
+                        setChatMessages([...chatMessages, { role: 'user', content: chatInput }]);
+                        setChatInput('');
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      if (chatInput.trim()) {
+                        setChatMessages([...chatMessages, { role: 'user', content: chatInput }]);
+                        setChatInput('');
+                      }
+                    }}
+                    className={`${styles.btnPrimary} px-4 py-2 rounded-button text-sm`}
+                  >
+                    发送
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

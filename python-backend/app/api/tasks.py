@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime
@@ -6,9 +7,10 @@ import uuid
 import asyncio
 import threading
 import os
+import json
 
 from app.database import get_db
-from app.models import Task, Workspace
+from app.models import Task, Workspace, TaskExecutionLog
 from app.schemas.task import (
     TaskCreate,
     TaskUpdate,
@@ -17,6 +19,10 @@ from app.schemas.task import (
     TaskDispatchRequest,
     TaskDispatchResponse
 )
+from app.schemas.task_execution_log import (
+    TaskExecutionLogCreate,
+    TaskExecutionLog as TaskExecutionLogSchema
+)
 from app.schemas.common import ResponseModel
 from app.config import settings
 
@@ -24,10 +30,11 @@ router = APIRouter(tags=["tasks"])
 
 async def execute_claude_agent_task_async(task_id: str, workspace_path: str, task_description: str):
     """
-    使用 Claude Agent SDK 异步执行任务，支持 hooks 回调
+    使用 Claude Agent SDK 异步执行任务，支持 hooks 回调和实时消息流
     """
     from app.database import SessionLocal
-    from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMessage
+    from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMessage, AssistantMessage, UserMessage
+    from app.utils.message_stream import message_stream_manager
     import logging
     import httpx
 
@@ -79,8 +86,16 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
         logger.info(f"开始执行任务 {task_id}: {task_description}")
         logger.info(f"工作目录: {workspace_path}")
 
+        # 推送初始消息
+        await message_stream_manager.add_message(task_id, {
+            "type": "init",
+            "message": f"任务开始执行: {task_description}",
+            "workspace": workspace_path
+        })
+
         # 收集输出和状态
         output_lines = []
+        all_messages = []  # 收集所有消息用于保存到执行日志
         task_status = "completed"
         error_message = None
         is_task_started = False
@@ -94,22 +109,43 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
             output_lines.append(str(message))
             logger.info(f"Agent 消息类型: {type(message).__name__}")
 
-            # 检测任务真正开始（SystemMessage with init）
-            if isinstance(message, SystemMessage) and hasattr(message, 'subtype') and message.subtype == 'init':
-                is_task_started = True
-                logger.info(f"任务 {task_id} 已开始执行")
+            # 构建推送消息
+            stream_message = {
+                "type": type(message).__name__,
+                "raw": str(message)[:500]  # 限制长度
+            }
 
-            # 检测任务完成（ResultMessage）
-            if isinstance(message, ResultMessage):
-                logger.info(f"收到 ResultMessage: is_error={message.is_error}")
+            # 根据消息类型添加额外信息
+            if isinstance(message, SystemMessage):
+                if hasattr(message, 'subtype'):
+                    stream_message["subtype"] = message.subtype
+                    if message.subtype == 'init':
+                        is_task_started = True
+                        stream_message["message"] = "Claude Agent 已初始化"
+
+            elif isinstance(message, AssistantMessage):
+                # 提取文本内容
+                texts = []
+                for block in message.content:
+                    if hasattr(block, 'text'):
+                        texts.append(block.text)
+                if texts:
+                    stream_message["text"] = "\n".join(texts)
+
+            elif isinstance(message, ResultMessage):
+                stream_message["is_error"] = message.is_error
+                stream_message["duration_ms"] = getattr(message, 'duration_ms', 0)
+                stream_message["cost_usd"] = getattr(message, 'total_cost_usd', 0)
 
                 # 判断任务状态
                 if message.is_error:
                     task_status = "failed"
                     error_message = getattr(message, 'result', '执行失败')
+                    stream_message["message"] = f"任务执行失败: {error_message}"
                     logger.error(f"任务 {task_id} 执行失败: {error_message}")
                 else:
                     task_status = "completed"
+                    stream_message["message"] = "任务执行成功"
                     logger.info(f"任务 {task_id} 执行成功")
 
                 # 执行结束 hook
@@ -132,6 +168,11 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
                             logger.info(f"结束 hook 响应: {response.status_code}")
                     except Exception as e:
                         logger.warning(f"结束 hook 执行失败: {str(e)}")
+
+            # 推送消息到流
+            await message_stream_manager.add_message(task_id, stream_message)
+            # 收集消息用于保存到执行日志
+            all_messages.append(stream_message)
 
         # 合并输出
         full_output = "\n".join(output_lines)
@@ -198,8 +239,38 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
                 logger.warning(f"结束 hook 执行失败: {str(hook_error)}")
 
     finally:
-        db.close()
-        logger.info(f"任务 {task_id} 执行流程结束")
+        # 保存执行日志到数据库
+        try:
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if task and len(all_messages) > 0:
+                # 获取该任务的最大执行次数
+                max_execution = db.query(TaskExecutionLog).filter(
+                    TaskExecutionLog.task_id == task_id
+                ).order_by(TaskExecutionLog.execution_number.desc()).first()
+
+                execution_number = (max_execution.execution_number + 1) if max_execution else 1
+
+                # 序列化所有消息
+                messages_json = json.dumps(all_messages, ensure_ascii=False)
+
+                # 创建执行日志记录
+                execution_log = TaskExecutionLog(
+                    id=str(uuid.uuid4()),
+                    task_id=task_id,
+                    execution_number=execution_number,
+                    response_type=task_status,  # 使用任务最终状态作为response_type
+                    response_content=messages_json,
+                    status='completed'
+                )
+
+                db.add(execution_log)
+                db.commit()
+                logger.info(f"任务 {task_id} 执行日志已保存 (第 {execution_number} 次执行)")
+        except Exception as log_error:
+            logger.error(f"保存执行日志失败: {str(log_error)}")
+        finally:
+            db.close()
+            logger.info(f"任务 {task_id} 执行流程结束")
 
 
 def execute_claude_code_task(task_id: str, workspace_path: str, task_description: str):
@@ -573,3 +644,220 @@ def get_task_status(
             "updated_at": db_task.updated_at
         }
     )
+
+@router.get("/tasks/{task_id}/stream")
+async def task_message_stream(task_id: str, db: Session = Depends(get_db)):
+    """SSE endpoint: 实时推送任务执行消息流"""
+    from app.utils.message_stream import message_stream_manager
+
+    # 验证任务是否存在
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    async def event_generator():
+        """生成SSE事件流"""
+        queue = await message_stream_manager.subscribe(task_id)
+
+        try:
+            while True:
+                # 检查任务状态
+                task = db.query(Task).filter(Task.id == task_id).first()
+                if task and task.status in ["completed", "failed"]:
+                    # 任务已结束，发送最后的消息后断开
+                    try:
+                        # 非阻塞获取剩余消息
+                        while not queue.empty():
+                            message = await asyncio.wait_for(queue.get(), timeout=0.1)
+                            yield f"data: {json.dumps(message, ensure_ascii=False)}\n\n"
+                    except asyncio.TimeoutError:
+                        pass
+
+                    # 发送结束信号
+                    yield f"data: {json.dumps({'type': 'end', 'status': task.status}, ensure_ascii=False)}\n\n"
+                    break
+
+                # 等待新消息 (最多30秒)
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield f"data: {json.dumps(message, ensure_ascii=False)}\n\n"
+                except asyncio.TimeoutError:
+                    # 发送心跳保持连接
+                    yield f": heartbeat\n\n"
+
+        except asyncio.CancelledError:
+            pass
+        finally:
+            message_stream_manager.unsubscribe(task_id, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # 禁用nginx缓冲
+        }
+    )
+
+
+@router.get("/tasks/{task_id}/execution-logs", response_model=ResponseModel[list[TaskExecutionLogSchema]])
+def get_task_execution_logs(
+    task_id: str,
+    db: Session = Depends(get_db)
+):
+    """获取任务的所有执行日志"""
+    # 验证任务是否存在
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 查询该任务的所有执行日志，按执行次数倒序排列
+    logs = db.query(TaskExecutionLog).filter(
+        TaskExecutionLog.task_id == task_id
+    ).order_by(TaskExecutionLog.execution_number.desc()).all()
+
+    return ResponseModel(
+        success=True,
+        message="获取执行日志成功",
+        data=logs
+    )
+
+
+@router.get("/tasks/{task_id}/execution-logs/{execution_number}", response_model=ResponseModel[TaskExecutionLogSchema])
+def get_task_execution_log_by_number(
+    task_id: str,
+    execution_number: int,
+    db: Session = Depends(get_db)
+):
+    """获取任务的特定执行日志"""
+    # 验证任务是否存在
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 查询特定的执行日志
+    log = db.query(TaskExecutionLog).filter(
+        TaskExecutionLog.task_id == task_id,
+        TaskExecutionLog.execution_number == execution_number
+    ).first()
+
+    if not log:
+        raise HTTPException(status_code=404, detail=f"第 {execution_number} 次执行日志不存在")
+
+    return ResponseModel(
+        success=True,
+        message="获取执行日志成功",
+        data=log
+    )
+
+
+@router.get("/workspaces/{workspace_id}/files")
+def get_workspace_files(
+    workspace_id: str,
+    db: Session = Depends(get_db)
+):
+    """获取工作区的文件列表"""
+    import subprocess
+
+    # 获取workspace
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+
+    if not workspace.path or not os.path.exists(workspace.path):
+        return ResponseModel(
+            code=200,
+            message="工作区路径不存在",
+            data=[]
+        )
+
+    try:
+        # 使用find命令列出所有文件（排除.git等隐藏目录）
+        result = subprocess.run(
+            ['find', workspace.path, '-type', 'f', '-not', '-path', '*/.*'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        if result.returncode == 0:
+            # 获取相对路径
+            files = []
+            for file_path in result.stdout.strip().split('\n'):
+                if file_path:
+                    rel_path = os.path.relpath(file_path, workspace.path)
+                    files.append(rel_path)
+
+            return ResponseModel(
+                code=200,
+                message="获取文件列表成功",
+                data=sorted(files)
+            )
+        else:
+            raise Exception(result.stderr)
+
+    except Exception as e:
+        return ResponseModel(
+            code=500,
+            message=f"获取文件列表失败: {str(e)}",
+            data=[]
+        )
+
+
+@router.get("/tasks/{task_id}/diff")
+def get_task_diff(
+    task_id: str,
+    db: Session = Depends(get_db)
+):
+    """获取任务执行过程中的git diff"""
+    import subprocess
+
+    # 获取任务和workspace
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    workspace = db.query(Workspace).filter(Workspace.id == task.workspace_id).first()
+    if not workspace or not workspace.path:
+        return ResponseModel(
+            code=200,
+            message="工作区路径不存在",
+            data=""
+        )
+
+    try:
+        # 检查是否是git仓库
+        git_check = subprocess.run(
+            ['git', '-C', workspace.path, 'rev-parse', '--git-dir'],
+            capture_output=True,
+            text=True
+        )
+
+        if git_check.returncode != 0:
+            return ResponseModel(
+                code=200,
+                message="不是git仓库",
+                data=""
+            )
+
+        # 获取git diff (包括staged和unstaged的修改)
+        diff_result = subprocess.run(
+            ['git', '-C', workspace.path, 'diff', 'HEAD'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        return ResponseModel(
+            code=200,
+            message="获取diff成功",
+            data=diff_result.stdout
+        )
+
+    except Exception as e:
+        return ResponseModel(
+            code=500,
+            message=f"获取diff失败: {str(e)}",
+            data=""
+        )

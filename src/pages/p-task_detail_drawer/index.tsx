@@ -3,17 +3,25 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import styles from './styles.module.css';
-import { TaskData, HookConfig, ToastState } from './types';
+import { TaskData, HookConfig, ToastState, ExecutionLog } from './types';
+import TaskMessageStream from '../../components/TaskMessageStream';
+import axios from 'axios';
 
 const TaskDetailDrawer: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  
+  const taskId = searchParams.get('taskId') || '1';
+
   // 模态框状态
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showDispatchModal, setShowDispatchModal] = useState(false);
   const [showRetryModal, setShowRetryModal] = useState(false);
   const [showHooksModal, setShowHooksModal] = useState(false);
+  const [showExecutionLogModal, setShowExecutionLogModal] = useState(false);
+
+  // 执行日志状态
+  const [executionLogs, setExecutionLogs] = useState<ExecutionLog[]>([]);
+  const [selectedLog, setSelectedLog] = useState<ExecutionLog | null>(null);
   
   // Toast状态
   const [toastState, setToastState] = useState<ToastState>({
@@ -71,11 +79,36 @@ const TaskDetailDrawer: React.FC = () => {
     };
   }, []);
 
+  // 字段是否可编辑（进行中的任务不可编辑）
+  const isEditable = taskData.status !== 'progress';
+
+  // 调试日志
+  console.log('TaskDetailDrawer - taskId:', taskId, 'status:', taskData.status, 'isEditable:', isEditable);
+
   // 加载任务数据
   useEffect(() => {
-    const taskId = searchParams.get('taskId') || '1';
     loadTaskData(taskId);
-  }, [searchParams]);
+    loadExecutionLogs();
+  }, [taskId]);
+
+  // 加载执行日志
+  const loadExecutionLogs = async () => {
+    try {
+      const response = await axios.get(`http://localhost:10101/api/tasks/${taskId}/execution-logs`);
+      if (response.data.success) {
+        setExecutionLogs(response.data.data || []);
+      }
+    } catch (error) {
+      console.error('加载执行日志失败:', error);
+      setExecutionLogs([]);
+    }
+  };
+
+  // 查看执行日志详情
+  const viewExecutionLog = (log: ExecutionLog) => {
+    setSelectedLog(log);
+    setShowExecutionLogModal(true);
+  };
 
   // ESC键关闭抽屉
   useEffect(() => {
@@ -366,22 +399,24 @@ const TaskDetailDrawer: React.FC = () => {
               {/* 任务名称 */}
               <div className="space-y-2">
                 <label className="text-sm font-medium text-textPrimary">任务名称</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={taskData.name}
                   onChange={(e) => setTaskData(prev => ({ ...prev, name: e.target.value }))}
-                  className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus}`}
+                  disabled={!isEditable}
+                  className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus} ${!isEditable ? 'bg-tertiary cursor-not-allowed' : ''}`}
                 />
               </div>
 
               {/* 任务描述 */}
               <div className="space-y-2">
                 <label className="text-sm font-medium text-textPrimary">任务描述</label>
-                <textarea 
+                <textarea
                   rows={4}
                   value={taskData.description}
                   onChange={(e) => setTaskData(prev => ({ ...prev, description: e.target.value }))}
-                  className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus} resize-none`}
+                  disabled={!isEditable}
+                  className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus} resize-none ${!isEditable ? 'bg-tertiary cursor-not-allowed' : ''}`}
                   placeholder="输入任务描述..."
                 />
               </div>
@@ -397,10 +432,11 @@ const TaskDetailDrawer: React.FC = () => {
               {/* 优先级 */}
               <div className="space-y-2">
                 <label className="text-sm font-medium text-textPrimary">优先级</label>
-                <select 
+                <select
                   value={taskData.priority}
                   onChange={(e) => setTaskData(prev => ({ ...prev, priority: e.target.value as TaskData['priority'] }))}
-                  className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus}`}
+                  disabled={!isEditable}
+                  className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus} ${!isEditable ? 'bg-tertiary cursor-not-allowed' : ''}`}
                 >
                   <option value="low">低</option>
                   <option value="medium">中</option>
@@ -440,10 +476,11 @@ const TaskDetailDrawer: React.FC = () => {
               {/* 当前状态 */}
               <div className="space-y-2">
                 <label className="text-sm font-medium text-textPrimary">当前状态</label>
-                <select 
+                <select
                   value={taskData.status}
                   onChange={(e) => setTaskData(prev => ({ ...prev, status: e.target.value as TaskData['status'] }))}
-                  className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus}`}
+                  disabled={!isEditable}
+                  className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus} ${!isEditable ? 'bg-tertiary cursor-not-allowed' : ''}`}
                 >
                   <option value="pending">待执行</option>
                   <option value="progress">进行中</option>
@@ -464,14 +501,69 @@ const TaskDetailDrawer: React.FC = () => {
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-textPrimary">人工Check状态</label>
                 <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     checked={taskData.manualCheck}
                     onChange={(e) => setTaskData(prev => ({ ...prev, manualCheck: e.target.checked }))}
                     className="sr-only peer"
                   />
                   <div className="w-11 h-6 bg-border rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-border after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                 </label>
+              </div>
+            </div>
+
+            {/* 执行日志 - 仅在任务进行中时显示 */}
+            {taskData.status === 'progress' && (
+              <div className="space-y-4">
+                <h3 className="text-sm font-medium text-textSecondary uppercase tracking-wider">执行日志</h3>
+                <TaskMessageStream taskId={taskId} isRunning={taskData.status === 'progress'} />
+              </div>
+            )}
+
+            {/* 执行历史记录 - 显示过去的执行记录 */}
+            <div className="space-y-4 border-2 border-pink-300 rounded-lg p-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-textSecondary uppercase tracking-wider">执行历史记录</h3>
+                <button
+                  onClick={() => loadExecutionLogs()}
+                  className="text-xs text-primary hover:underline"
+                >
+                  刷新
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {executionLogs.length === 0 ? (
+                  <div className="text-center text-gray-400 py-4">
+                    <i className="fas fa-info-circle mr-2"></i>
+                    暂无执行历史
+                  </div>
+                ) : (
+                  executionLogs.map((log) => (
+                    <div key={log.id} className="p-3 bg-tertiary rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
+                         onClick={() => viewExecutionLog(log)}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-semibold text-textPrimary">
+                          第 {log.execution_number} 次执行
+                        </span>
+                        <div className="flex items-center space-x-2">
+                          <span className={`text-xs px-2 py-0.5 rounded ${
+                            log.response_type === 'completed' ? 'bg-green-100 text-green-700' :
+                            log.response_type === 'failed' ? 'bg-red-100 text-red-700' : 'bg-gray-100'
+                          }`}>
+                            {log.response_type === 'completed' ? '成功' : log.response_type === 'failed' ? '失败' : log.response_type}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {new Date(log.created_at).toLocaleString('zh-CN')}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-xs text-gray-600 truncate">
+                        点击查看详细日志
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
@@ -843,6 +935,125 @@ const TaskDetailDrawer: React.FC = () => {
                     className={`px-4 py-2 ${styles.btnPrimary} rounded-button text-sm font-medium`}
                   >
                     保存
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 执行日志详情弹窗 */}
+      {showExecutionLogModal && selectedLog && (
+        <div className="fixed inset-0 z-50">
+          <div
+            className={`${styles.modalOverlay} absolute inset-0`}
+            onClick={() => setShowExecutionLogModal(false)}
+          ></div>
+          <div className="relative flex items-center justify-center min-h-screen p-4">
+            <div
+              className={`${styles.modalContent} bg-surface rounded-card shadow-card max-w-4xl w-full max-h-[80vh] overflow-y-auto`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h3 className="text-lg font-semibold text-textPrimary">第 {selectedLog.execution_number} 次执行日志</h3>
+                    <div className="flex items-center space-x-3 mt-1">
+                      <span className={`text-xs px-2 py-0.5 rounded ${
+                        selectedLog.response_type === 'completed' ? 'bg-green-100 text-green-700' :
+                        selectedLog.response_type === 'failed' ? 'bg-red-100 text-red-700' : 'bg-gray-100'
+                      }`}>
+                        {selectedLog.response_type === 'completed' ? '成功' : selectedLog.response_type === 'failed' ? '失败' : selectedLog.response_type}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        {new Date(selectedLog.created_at).toLocaleString('zh-CN')}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowExecutionLogModal(false)}
+                    className="p-2 hover:bg-tertiary rounded-button transition-colors"
+                  >
+                    <i className="fas fa-times text-textSecondary"></i>
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="text-sm font-medium text-textPrimary">执行消息流</h4>
+                  <div className="bg-tertiary rounded-lg p-4 max-h-96 overflow-y-auto">
+                    {(() => {
+                      try {
+                        const messages = JSON.parse(selectedLog.response_content);
+                        return messages.map((msg: any, index: number) => {
+                          let bgColor = 'bg-gray-50';
+                          let icon = 'fa-info-circle';
+                          let iconColor = 'text-blue-500';
+
+                          if (msg.type === 'init') {
+                            bgColor = 'bg-blue-50';
+                            icon = 'fa-rocket';
+                            iconColor = 'text-blue-500';
+                          } else if (msg.type === 'SystemMessage') {
+                            bgColor = 'bg-purple-50';
+                            icon = 'fa-cog';
+                            iconColor = 'text-purple-500';
+                          } else if (msg.type === 'AssistantMessage') {
+                            bgColor = 'bg-green-50';
+                            icon = 'fa-comment-dots';
+                            iconColor = 'text-green-500';
+                          } else if (msg.type === 'ResultMessage') {
+                            if (msg.is_error) {
+                              bgColor = 'bg-red-50';
+                              icon = 'fa-times-circle';
+                              iconColor = 'text-red-500';
+                            } else {
+                              bgColor = 'bg-green-100';
+                              icon = 'fa-check-circle';
+                              iconColor = 'text-green-600';
+                            }
+                          }
+
+                          return (
+                            <div key={index} className={`p-3 rounded-lg ${bgColor} mb-2`}>
+                              <div className="flex items-start space-x-2">
+                                <i className={`fas ${icon} ${iconColor} mt-0.5`}></i>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs font-semibold text-gray-600">{msg.type}</span>
+                                    {msg.duration_ms && (
+                                      <span className="text-xs text-gray-500">{msg.duration_ms}ms</span>
+                                    )}
+                                  </div>
+                                  {msg.message && (
+                                    <p className="text-sm text-gray-800 mb-1">{msg.message}</p>
+                                  )}
+                                  {msg.text && (
+                                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{msg.text}</p>
+                                  )}
+                                  {msg.cost_usd && (
+                                    <div className="mt-1 text-xs text-gray-500">
+                                      成本: ${msg.cost_usd.toFixed(4)}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        });
+                      } catch (error) {
+                        return <div className="text-red-500">解析日志失败</div>;
+                      }
+                    })()}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end mt-6 pt-4 border-t border-border">
+                  <button
+                    onClick={() => setShowExecutionLogModal(false)}
+                    className={`px-4 py-2 ${styles.btnSecondary} rounded-button text-sm font-medium`}
+                  >
+                    关闭
                   </button>
                 </div>
               </div>

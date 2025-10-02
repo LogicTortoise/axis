@@ -31,3 +31,4 @@ class Task(Base):
     hooks = relationship("HookConfig", back_populates="task", cascade="all, delete-orphan")
     queue_tasks = relationship("QueueTask", back_populates="task", cascade="all, delete-orphan")
     notifications = relationship("Notification", back_populates="task")
+    execution_logs = relationship("TaskExecutionLog", back_populates="task", cascade="all, delete-orphan")

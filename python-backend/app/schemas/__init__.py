@@ -33,6 +33,11 @@ from app.schemas.notification import (
     BatchReadRequest,
     UnreadCountResponse
 )
+from app.schemas.task_execution_log import (
+    TaskExecutionLogCreate,
+    TaskExecutionLogUpdate,
+    TaskExecutionLog
+)
 
 __all__ = [
     "WorkspaceCreate",
@@ -59,5 +64,8 @@ __all__ = [
     "NotificationResponse",
     "NotificationListResponse",
     "BatchReadRequest",
-    "UnreadCountResponse"
+    "UnreadCountResponse",
+    "TaskExecutionLogCreate",
+    "TaskExecutionLogUpdate",
+    "TaskExecutionLog"
 ]
