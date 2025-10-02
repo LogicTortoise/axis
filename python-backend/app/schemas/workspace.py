@@ -6,6 +6,7 @@ class WorkspaceBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = None
     project_goal: str = Field(..., min_length=1)
+    path: Optional[str] = None
     icon: Optional[str] = "fas fa-folder"
     icon_color: Optional[str] = "bg-primary"
 
@@ -16,6 +17,7 @@ class WorkspaceUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = None
     project_goal: Optional[str] = Field(None, min_length=1)
+    path: Optional[str] = None
     icon: Optional[str] = None
     icon_color: Optional[str] = None
 

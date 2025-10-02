@@ -10,6 +10,7 @@ class Workspace(Base):
     name = Column(String, nullable=False)
     description = Column(Text)
     project_goal = Column(Text, nullable=False)
+    path = Column(Text)  # 工作空间的文件系统路径
     icon = Column(String, default='fas fa-folder')
     icon_color = Column(String, default='bg-primary')
     created_at = Column(TIMESTAMP, server_default=func.now())

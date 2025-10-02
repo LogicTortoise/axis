@@ -17,6 +17,7 @@ interface WorkspaceFormData {
   name: string;
   description: string;
   project_goal: string;
+  path: string;
 }
 
 const WorkspaceListPage: React.FC = () => {
@@ -35,7 +36,8 @@ const WorkspaceListPage: React.FC = () => {
   const [workspaceFormData, setWorkspaceFormData] = useState<WorkspaceFormData>({
     name: '',
     description: '',
-    project_goal: ''
+    project_goal: '',
+    path: ''
   });
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,7 +109,8 @@ const WorkspaceListPage: React.FC = () => {
     setWorkspaceFormData({
       name: '',
       description: '',
-      project_goal: ''
+      project_goal: '',
+      path: ''
     });
     setShowWorkspaceModal(true);
     document.body.style.overflow = 'hidden';
@@ -121,7 +124,8 @@ const WorkspaceListPage: React.FC = () => {
       setWorkspaceFormData({
         name: workspace.name,
         description: workspace.description || '',
-        project_goal: workspace.project_goal
+        project_goal: workspace.project_goal,
+        path: workspace.path || ''
       });
     }
     setShowWorkspaceModal(true);
@@ -171,7 +175,8 @@ const WorkspaceListPage: React.FC = () => {
         const updateData: WorkspaceUpdateInput = {
           name: workspaceFormData.name,
           description: workspaceFormData.description,
-          project_goal: workspaceFormData.project_goal
+          project_goal: workspaceFormData.project_goal,
+          path: workspaceFormData.path
         };
         await updateWorkspace(currentEditingWorkspaceId, updateData);
         showSuccessMessage('工作区更新成功');
@@ -180,7 +185,8 @@ const WorkspaceListPage: React.FC = () => {
         const createData: WorkspaceCreateInput = {
           name: workspaceFormData.name,
           description: workspaceFormData.description,
-          project_goal: workspaceFormData.project_goal
+          project_goal: workspaceFormData.project_goal,
+          path: workspaceFormData.path
         };
         await createWorkspace(createData);
         showSuccessMessage('工作区创建成功');
@@ -611,6 +617,25 @@ const WorkspaceListPage: React.FC = () => {
                     className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus} resize-none`}
                     placeholder="请输入描述..."
                   ></textarea>
+                </div>
+
+                {/* 工作目录 */}
+                <div className="space-y-2">
+                  <label htmlFor="workspace-path" className="block text-sm font-medium text-textPrimary">
+                    工作目录
+                  </label>
+                  <input
+                    type="text"
+                    id="workspace-path"
+                    name="path"
+                    value={workspaceFormData.path}
+                    onChange={handleFormInputChange}
+                    className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus}`}
+                    placeholder="请输入工作目录路径，例如：/Users/your-name/projects/my-project"
+                  />
+                  <p className="text-xs text-textSecondary">
+                    指定 Claude Code 执行任务的本地文件夹路径
+                  </p>
                 </div>
               </form>
             </div>

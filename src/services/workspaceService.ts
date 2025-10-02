@@ -5,6 +5,7 @@ export interface Workspace {
   name: string;
   description: string;
   project_goal: string;
+  path?: string;
   icon?: string;
   icon_color?: string;
   created_at: string;
@@ -17,6 +18,7 @@ export interface WorkspaceCreateInput {
   name: string;
   description?: string;
   project_goal: string;
+  path?: string;
   icon?: string;
   icon_color?: string;
 }
@@ -25,6 +27,7 @@ export interface WorkspaceUpdateInput {
   name?: string;
   description?: string;
   project_goal?: string;
+  path?: string;
   icon?: string;
   icon_color?: string;
 }

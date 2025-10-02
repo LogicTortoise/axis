@@ -1,8 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime
 import uuid
+import asyncio
+import threading
+import os
 
 from app.database import get_db
 from app.models import Task, Workspace
@@ -15,8 +18,97 @@ from app.schemas.task import (
     TaskDispatchResponse
 )
 from app.schemas.common import ResponseModel
+from app.config import settings
 
 router = APIRouter(tags=["tasks"])
+
+async def execute_claude_agent_task_async(task_id: str, workspace_path: str, task_description: str):
+    """
+    使用 Claude Agent SDK 异步执行任务
+    """
+    from app.database import SessionLocal
+    from claude_agent_sdk import query, ClaudeAgentOptions
+    import logging
+
+    logger = logging.getLogger(__name__)
+    db = SessionLocal()
+
+    try:
+        # 检查 API Key
+        if not settings.anthropic_api_key:
+            raise ValueError("ANTHROPIC_API_KEY 未配置，请在 .env 文件中设置")
+
+        # 设置环境变量
+        os.environ["ANTHROPIC_API_KEY"] = settings.anthropic_api_key
+
+        # 配置 Agent 选项
+        options = ClaudeAgentOptions(
+            allowed_tools=["Read", "Write", "Edit", "Bash"],
+            permission_mode='acceptEdits',  # 自动接受编辑
+            cwd=workspace_path  # 设置工作目录
+        )
+
+        logger.info(f"开始执行任务 {task_id}: {task_description}")
+        logger.info(f"工作目录: {workspace_path}")
+
+        # 收集输出
+        output_lines = []
+
+        # 使用 Claude Agent SDK 执行任务
+        async for message in query(
+            prompt=task_description,
+            options=options
+        ):
+            # 记录消息
+            output_lines.append(str(message))
+            logger.info(f"Agent 消息: {str(message)[:200]}")
+
+        # 合并输出
+        full_output = "\n".join(output_lines)
+
+        # 更新任务状态为成功
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task:
+            task.status = "completed"
+            task.execution_output = full_output[:5000] if full_output else None
+            task.error_message = None
+            db.commit()
+            logger.info(f"任务 {task_id} 执行成功")
+
+    except ValueError as e:
+        # API Key 未配置
+        logger.error(f"任务 {task_id} 配置错误: {str(e)}")
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task:
+            task.status = "failed"
+            task.error_message = str(e)
+            db.commit()
+
+    except Exception as e:
+        # 其他错误
+        logger.error(f"任务 {task_id} 执行异常: {str(e)}", exc_info=True)
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task:
+            task.status = "failed"
+            task.error_message = f"执行异常: {str(e)}"
+            db.commit()
+
+    finally:
+        db.close()
+        logger.info(f"任务 {task_id} 执行流程结束")
+
+
+def execute_claude_code_task(task_id: str, workspace_path: str, task_description: str):
+    """
+    在后台线程中执行 Claude Agent 任务（同步包装器）
+    """
+    # 创建新的事件循环来运行异步函数
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(execute_claude_agent_task_async(task_id, workspace_path, task_description))
+    finally:
+        loop.close()
 
 @router.get("/workspaces/{workspace_id}/tasks", response_model=ResponseModel[TaskListResponse])
 def get_tasks(
@@ -75,6 +167,8 @@ def get_tasks(
             "api_task_id": task.api_task_id,
             "execution_id": task.execution_id,
             "dispatch_time": task.dispatch_time,
+            "error_message": task.error_message,
+            "execution_output": task.execution_output,
             "start_hook": task.start_hook_curl,
             "stop_hook": task.stop_hook_curl,
             "created_at": task.created_at,
@@ -116,6 +210,8 @@ def get_task(
         "api_task_id": task.api_task_id,
         "execution_id": task.execution_id,
         "dispatch_time": task.dispatch_time,
+        "error_message": task.error_message,
+        "execution_output": task.execution_output,
         "start_hook": task.start_hook_curl,
         "stop_hook": task.stop_hook_curl,
         "created_at": task.created_at,
@@ -169,6 +265,8 @@ def create_task(
         "api_task_id": db_task.api_task_id,
         "execution_id": db_task.execution_id,
         "dispatch_time": db_task.dispatch_time,
+        "error_message": db_task.error_message,
+        "execution_output": db_task.execution_output,
         "start_hook": db_task.start_hook_curl,
         "stop_hook": db_task.stop_hook_curl,
         "created_at": db_task.created_at,
@@ -217,6 +315,8 @@ def update_task(
         "api_task_id": db_task.api_task_id,
         "execution_id": db_task.execution_id,
         "dispatch_time": db_task.dispatch_time,
+        "error_message": db_task.error_message,
+        "execution_output": db_task.execution_output,
         "start_hook": db_task.start_hook_curl,
         "stop_hook": db_task.stop_hook_curl,
         "created_at": db_task.created_at,
@@ -259,10 +359,23 @@ def dispatch_task(
     if not db_task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
+    # 获取工作空间信息
+    workspace = db.query(Workspace).filter(Workspace.id == db_task.workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+
+    # 检查工作空间是否配置了路径
+    if not workspace.path:
+        raise HTTPException(status_code=400, detail="工作区未配置路径")
+
+    # 检查路径是否存在
+    if not os.path.exists(workspace.path):
+        raise HTTPException(status_code=400, detail=f"工作区路径不存在: {workspace.path}")
+
     # 生成执行ID
     execution_id = f"exec-sys-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{str(uuid.uuid4())[:8]}"
 
-    # 更新任务状态
+    # 更新任务状态为 progress (running)
     db_task.status = "progress"
     db_task.execution_id = execution_id
     db_task.dispatch_time = datetime.now()
@@ -270,8 +383,13 @@ def dispatch_task(
     db.commit()
     db.refresh(db_task)
 
-    # 这里应该调用外部执行系统的 API，暂时模拟
-    # TODO: 实现实际的任务下发逻辑
+    # 在后台线程中执行 Claude Code 任务
+    thread = threading.Thread(
+        target=execute_claude_code_task,
+        args=(task_id, workspace.path, db_task.description),
+        daemon=True
+    )
+    thread.start()
 
     return ResponseModel(
         code=200,

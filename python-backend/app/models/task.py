@@ -19,6 +19,8 @@ class Task(Base):
     api_data = Column(Text)
     execution_id = Column(Text)
     dispatch_time = Column(TIMESTAMP)
+    error_message = Column(Text)  # 存储错误信息
+    execution_output = Column(Text)  # 存储执行输出
     start_hook_curl = Column(Text)
     stop_hook_curl = Column(Text)
     created_at = Column(TIMESTAMP, server_default=func.now(), index=True)
