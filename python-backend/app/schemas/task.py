@@ -37,6 +37,8 @@ class TaskUpdate(BaseModel):
     priority: Optional[PriorityEnum] = None
     status: Optional[StatusEnum] = None
     manual_check: Optional[bool] = None
+    start_hook: Optional[str] = None
+    stop_hook: Optional[str] = None
 
 class TaskResponse(TaskBase):
     id: str

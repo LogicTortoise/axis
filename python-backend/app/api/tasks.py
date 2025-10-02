@@ -24,11 +24,12 @@ router = APIRouter(tags=["tasks"])
 
 async def execute_claude_agent_task_async(task_id: str, workspace_path: str, task_description: str):
     """
-    使用 Claude Agent SDK 异步执行任务
+    使用 Claude Agent SDK 异步执行任务，支持 hooks 回调
     """
     from app.database import SessionLocal
-    from claude_agent_sdk import query, ClaudeAgentOptions
+    from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage, SystemMessage
     import logging
+    import httpx
 
     logger = logging.getLogger(__name__)
     db = SessionLocal()
@@ -41,6 +42,33 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
         # 设置环境变量
         os.environ["ANTHROPIC_API_KEY"] = settings.anthropic_api_key
 
+        # 获取任务信息（包括 hooks）
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            logger.error(f"任务 {task_id} 不存在")
+            return
+
+        start_hook_url = task.start_hook_curl
+        stop_hook_url = task.stop_hook_curl
+
+        # 执行开始 hook
+        if start_hook_url:
+            try:
+                logger.info(f"执行开始 hook: {start_hook_url}")
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(
+                        start_hook_url,
+                        json={
+                            "task_id": task_id,
+                            "execution_id": task.execution_id,
+                            "status": "started",
+                            "workspace_path": workspace_path
+                        }
+                    )
+                    logger.info(f"开始 hook 响应: {response.status_code}")
+            except Exception as e:
+                logger.warning(f"开始 hook 执行失败: {str(e)}")
+
         # 配置 Agent 选项
         options = ClaudeAgentOptions(
             allowed_tools=["Read", "Write", "Edit", "Bash"],
@@ -51,8 +79,11 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
         logger.info(f"开始执行任务 {task_id}: {task_description}")
         logger.info(f"工作目录: {workspace_path}")
 
-        # 收集输出
+        # 收集输出和状态
         output_lines = []
+        task_status = "completed"
+        error_message = None
+        is_task_started = False
 
         # 使用 Claude Agent SDK 执行任务
         async for message in query(
@@ -61,19 +92,58 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
         ):
             # 记录消息
             output_lines.append(str(message))
-            logger.info(f"Agent 消息: {str(message)[:200]}")
+            logger.info(f"Agent 消息类型: {type(message).__name__}")
+
+            # 检测任务真正开始（SystemMessage with init）
+            if isinstance(message, SystemMessage) and hasattr(message, 'subtype') and message.subtype == 'init':
+                is_task_started = True
+                logger.info(f"任务 {task_id} 已开始执行")
+
+            # 检测任务完成（ResultMessage）
+            if isinstance(message, ResultMessage):
+                logger.info(f"收到 ResultMessage: is_error={message.is_error}")
+
+                # 判断任务状态
+                if message.is_error:
+                    task_status = "failed"
+                    error_message = getattr(message, 'result', '执行失败')
+                    logger.error(f"任务 {task_id} 执行失败: {error_message}")
+                else:
+                    task_status = "completed"
+                    logger.info(f"任务 {task_id} 执行成功")
+
+                # 执行结束 hook
+                if stop_hook_url:
+                    try:
+                        logger.info(f"执行结束 hook: {stop_hook_url}")
+                        async with httpx.AsyncClient(timeout=10.0) as client:
+                            response = await client.post(
+                                stop_hook_url,
+                                json={
+                                    "task_id": task_id,
+                                    "execution_id": task.execution_id,
+                                    "status": task_status,
+                                    "is_error": message.is_error,
+                                    "duration_ms": getattr(message, 'duration_ms', 0),
+                                    "total_cost_usd": getattr(message, 'total_cost_usd', 0),
+                                    "error_message": error_message
+                                }
+                            )
+                            logger.info(f"结束 hook 响应: {response.status_code}")
+                    except Exception as e:
+                        logger.warning(f"结束 hook 执行失败: {str(e)}")
 
         # 合并输出
         full_output = "\n".join(output_lines)
 
-        # 更新任务状态为成功
+        # 更新任务状态
         task = db.query(Task).filter(Task.id == task_id).first()
         if task:
-            task.status = "completed"
+            task.status = task_status
             task.execution_output = full_output[:5000] if full_output else None
-            task.error_message = None
+            task.error_message = error_message
             db.commit()
-            logger.info(f"任务 {task_id} 执行成功")
+            logger.info(f"任务 {task_id} 最终状态: {task_status}")
 
     except ValueError as e:
         # API Key 未配置
@@ -84,6 +154,23 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
             task.error_message = str(e)
             db.commit()
 
+        # 执行结束 hook（失败）
+        if task and task.stop_hook_curl:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    await client.post(
+                        task.stop_hook_curl,
+                        json={
+                            "task_id": task_id,
+                            "execution_id": task.execution_id,
+                            "status": "failed",
+                            "is_error": True,
+                            "error_message": str(e)
+                        }
+                    )
+            except Exception as hook_error:
+                logger.warning(f"结束 hook 执行失败: {str(hook_error)}")
+
     except Exception as e:
         # 其他错误
         logger.error(f"任务 {task_id} 执行异常: {str(e)}", exc_info=True)
@@ -92,6 +179,23 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
             task.status = "failed"
             task.error_message = f"执行异常: {str(e)}"
             db.commit()
+
+        # 执行结束 hook（失败）
+        if task and task.stop_hook_curl:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    await client.post(
+                        task.stop_hook_curl,
+                        json={
+                            "task_id": task_id,
+                            "execution_id": task.execution_id,
+                            "status": "failed",
+                            "is_error": True,
+                            "error_message": str(e)
+                        }
+                    )
+            except Exception as hook_error:
+                logger.warning(f"结束 hook 执行失败: {str(hook_error)}")
 
     finally:
         db.close()
@@ -295,6 +399,12 @@ def update_task(
     # 处理 manual_check 字段
     if 'manual_check' in update_data:
         update_data['manual_check'] = 1 if update_data['manual_check'] else 0
+
+    # 处理 hook 字段名映射
+    if 'start_hook' in update_data:
+        update_data['start_hook_curl'] = update_data.pop('start_hook')
+    if 'stop_hook' in update_data:
+        update_data['stop_hook_curl'] = update_data.pop('stop_hook')
 
     for key, value in update_data.items():
         setattr(db_task, key, value)
