@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import axios from 'axios';
 
 interface Message {
   type: string;
@@ -19,6 +20,7 @@ interface TaskMessageStreamProps {
 const TaskMessageStream: React.FC<TaskMessageStreamProps> = ({ taskId, isRunning }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isConnected, setIsConnected] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -31,11 +33,47 @@ const TaskMessageStream: React.FC<TaskMessageStreamProps> = ({ taskId, isRunning
     scrollToBottom();
   }, [messages]);
 
+  // 加载历史消息（对于已完成或失败的任务）
+  useEffect(() => {
+    if (isRunning || !taskId) {
+      return;
+    }
+
+    const loadHistoryMessages = async () => {
+      setIsLoading(true);
+      try {
+        const response = await axios.get(`http://localhost:10101/api/tasks/${taskId}/execution-logs`);
+        if (response.data.code === 200 && response.data.data && response.data.data.length > 0) {
+          // 获取最新的执行日志
+          const latestLog = response.data.data[0];
+
+          // 解析消息内容
+          try {
+            const parsedMessages = JSON.parse(latestLog.response_content);
+            setMessages(parsedMessages);
+          } catch (error) {
+            console.error('解析历史消息失败:', error);
+          }
+        }
+      } catch (error) {
+        console.error('加载历史消息失败:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadHistoryMessages();
+  }, [taskId, isRunning]);
+
+  // SSE实时连接（对于正在执行的任务）
   useEffect(() => {
     // 只在任务运行中时连接SSE
     if (!isRunning || !taskId) {
       return;
     }
+
+    // 清空之前的消息
+    setMessages([]);
 
     // 创建SSE连接
     const eventSource = new EventSource(`http://localhost:10101/api/tasks/${taskId}/stream`);
@@ -141,24 +179,23 @@ const TaskMessageStream: React.FC<TaskMessageStreamProps> = ({ taskId, isRunning
     );
   };
 
-  if (!isRunning) {
-    return (
-      <div className="p-4 bg-gray-50 rounded-lg text-center text-gray-500">
-        <i className="fas fa-info-circle mr-2"></i>
-        任务未在执行中
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium text-gray-700">执行消息流</h4>
+        <h4 className="text-sm font-medium text-gray-700">
+          {isRunning ? '执行消息流' : '最近执行消息'}
+        </h4>
         <div className="flex items-center space-x-2">
           {isConnected && (
             <span className="flex items-center text-xs text-green-600">
               <span className="w-2 h-2 bg-green-500 rounded-full mr-1.5 animate-pulse"></span>
               实时连接中
+            </span>
+          )}
+          {isLoading && (
+            <span className="flex items-center text-xs text-gray-500">
+              <i className="fas fa-spinner fa-spin mr-1.5"></i>
+              加载中...
             </span>
           )}
         </div>
@@ -167,8 +204,17 @@ const TaskMessageStream: React.FC<TaskMessageStreamProps> = ({ taskId, isRunning
       <div className="bg-white border border-gray-200 rounded-lg p-4 max-h-96 overflow-y-auto">
         {messages.length === 0 ? (
           <div className="text-center text-gray-400 py-4">
-            <i className="fas fa-spinner fa-spin mr-2"></i>
-            等待消息...
+            {isRunning ? (
+              <>
+                <i className="fas fa-spinner fa-spin mr-2"></i>
+                等待消息...
+              </>
+            ) : (
+              <>
+                <i className="fas fa-info-circle mr-2"></i>
+                暂无执行消息
+              </>
+            )}
           </div>
         ) : (
           <div>

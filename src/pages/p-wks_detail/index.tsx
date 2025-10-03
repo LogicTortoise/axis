@@ -10,12 +10,15 @@ import {
   deleteTask,
   dispatchTask,
   retryTask,
+  generateTasks,
   Task,
   TaskCreateInput,
   TaskUpdateInput,
   TaskListParams
 } from '../../services/taskService';
+import ProgressBar from '../../components/ProgressBar';
 import axios from 'axios';
+import { API_BASE_URL } from '../../services/api';
 
 interface ExecutionLog {
   id: string;
@@ -44,6 +47,7 @@ const WorkspaceDetailPage: React.FC = () => {
   const [totalTasks, setTotalTasks] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
+  const [taskProgress, setTaskProgress] = useState<Record<string, number>>({});
 
   // UI状态
   const [showTaskDrawer, setShowTaskDrawer] = useState<boolean>(false);
@@ -51,10 +55,17 @@ const WorkspaceDetailPage: React.FC = () => {
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState<boolean>(false);
   const [showDispatchConfirmModal, setShowDispatchConfirmModal] = useState<boolean>(false);
   const [showEditWorkspaceModal, setShowEditWorkspaceModal] = useState<boolean>(false);
+  const [showGenerateTaskModal, setShowGenerateTaskModal] = useState<boolean>(false);
   const [deleteTaskName, setDeleteTaskName] = useState<string>('');
   const [dispatchTaskName, setDispatchTaskName] = useState<string>('');
   const [dispatchTaskId, setDispatchTaskId] = useState<string>('');
   const [isRetryDispatch, setIsRetryDispatch] = useState<boolean>(false);
+
+  // 生成任务相关状态
+  const [generateTaskDescription, setGenerateTaskDescription] = useState<string>('');
+  const [generatedTasks, setGeneratedTasks] = useState<TaskCreateInput[]>([]);
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [showGeneratedTasksConfirm, setShowGeneratedTasksConfirm] = useState<boolean>(false);
 
   // 搜索和筛选状态
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -120,6 +131,53 @@ const WorkspaceDetailPage: React.FC = () => {
       fetchTasks();
     }
   }, [currentWorkspaceId, currentPage, pageSize, sortField, sortOrder, searchTerm, statusFilter, priorityFilter, sourceFilter]);
+
+  // 订阅进行中任务的SSE流，实时更新进度
+  useEffect(() => {
+    const eventSources: EventSource[] = [];
+
+    // 找到所有进行中的任务
+    const progressTasks = tasks.filter(task => task.status === 'progress');
+
+    // 为每个进行中的任务订阅SSE流
+    progressTasks.forEach(task => {
+      const eventSource = new EventSource(`${API_BASE_URL}/tasks/${task.id}/stream`);
+
+      eventSource.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+
+          // 如果消息包含进度信息，更新进度状态
+          if (message.progress !== undefined) {
+            setTaskProgress(prev => ({
+              ...prev,
+              [task.id]: message.progress
+            }));
+          }
+
+          // 如果任务结束（ResultMessage），刷新任务列表并关闭连接
+          if (message.type === 'ResultMessage') {
+            eventSource.close();
+            fetchTasks();
+          }
+        } catch (error) {
+          console.error('Error parsing SSE message:', error);
+        }
+      };
+
+      eventSource.onerror = (error) => {
+        console.error('SSE connection error:', error);
+        eventSource.close();
+      };
+
+      eventSources.push(eventSource);
+    });
+
+    // 清理函数：关闭所有EventSource连接
+    return () => {
+      eventSources.forEach(es => es.close());
+    };
+  }, [tasks]);
 
   const fetchWorkspace = async () => {
     try {
@@ -505,6 +563,58 @@ const WorkspaceDetailPage: React.FC = () => {
     }
   };
 
+  // 打开生成任务模态框
+  const openGenerateTaskModal = () => {
+    setGenerateTaskDescription('');
+    setGeneratedTasks([]);
+    setShowGeneratedTasksConfirm(false);
+    setShowGenerateTaskModal(true);
+    document.body.style.overflow = 'hidden';
+  };
+
+  // 关闭生成任务模态框
+  const closeGenerateTaskModal = () => {
+    setShowGenerateTaskModal(false);
+    document.body.style.overflow = 'auto';
+  };
+
+  // 提交生成任务
+  const submitGenerateTask = async () => {
+    if (!generateTaskDescription.trim()) {
+      showErrorMessage('请输入任务描述');
+      return;
+    }
+
+    try {
+      setIsGenerating(true);
+      const tasks = await generateTasks(currentWorkspaceId, generateTaskDescription);
+      setGeneratedTasks(tasks);
+      setShowGeneratedTasksConfirm(true);
+      showSuccessMessage(`成功生成 ${tasks.length} 个任务`);
+    } catch (error) {
+      console.error('Failed to generate tasks:', error);
+      showErrorMessage('生成任务失败');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // 确认创建生成的任务
+  const confirmCreateGeneratedTasks = async () => {
+    try {
+      // 批量创建任务
+      await Promise.all(
+        generatedTasks.map(task => createTask(currentWorkspaceId, task))
+      );
+      await fetchTasks();
+      closeGenerateTaskModal();
+      showSuccessMessage(`成功创建 ${generatedTasks.length} 个任务`);
+    } catch (error) {
+      console.error('Failed to create tasks:', error);
+      showErrorMessage('创建任务失败');
+    }
+  };
+
   // 显示成功消息
   const showSuccessMessage = (message: string) => {
     showNotification(message, 'success');
@@ -559,6 +669,7 @@ const WorkspaceDetailPage: React.FC = () => {
         closeDeleteConfirmModal();
         closeDispatchConfirmModal();
         closeEditWorkspaceModal();
+        closeGenerateTaskModal();
       }
     };
 
@@ -691,7 +802,14 @@ const WorkspaceDetailPage: React.FC = () => {
                   className={`${styles.btnSecondary} px-4 py-2 rounded-button text-sm font-medium flex items-center space-x-2`}
                 >
                   <i className="fas fa-sync-alt"></i>
-                  <span>手动获取任务</span>
+                  <span>刷新</span>
+                </button>
+                <button
+                  onClick={openGenerateTaskModal}
+                  className={`${styles.btnSecondary} px-4 py-2 rounded-button text-sm font-medium flex items-center space-x-2`}
+                >
+                  <i className="fas fa-magic"></i>
+                  <span>一键生成任务</span>
                 </button>
                 <button
                   onClick={openAddTaskModal}
@@ -877,9 +995,18 @@ const WorkspaceDetailPage: React.FC = () => {
                               </span>
                             </td>
                             <td className="px-4 py-3">
-                              <span className={`${styles[`status${task.status.charAt(0).toUpperCase() + task.status.slice(1)}`]} px-3 py-1 rounded-full text-xs font-medium`}>
-                                {getStatusText(task.status)}
-                              </span>
+                              <div className="flex flex-col gap-2">
+                                <span className={`${styles[`status${task.status.charAt(0).toUpperCase() + task.status.slice(1)}`]} px-3 py-1 rounded-full text-xs font-medium`}>
+                                  {getStatusText(task.status)}
+                                </span>
+                                {task.status === 'progress' && (
+                                  <ProgressBar
+                                    progress={taskProgress[task.id] || 0}
+                                    showText={true}
+                                    height="12px"
+                                  />
+                                )}
+                              </div>
                             </td>
                             <td className="px-4 py-3">
                               {task.queue_status === 'queue' ?
@@ -1368,6 +1495,114 @@ const WorkspaceDetailPage: React.FC = () => {
                 取消
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Generate Tasks Modal */}
+      {showGenerateTaskModal && (
+        <div className="fixed inset-0 z-50">
+          <div className={styles.modalOverlay} onClick={closeGenerateTaskModal}></div>
+          <div className={`${styles.modalContent} ${showGeneratedTasksConfirm ? 'max-w-4xl' : ''}`} onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-border">
+              <h3 className="text-lg font-semibold text-textPrimary">一键生成任务</h3>
+            </div>
+
+            {!showGeneratedTasksConfirm ? (
+              <>
+                <div className="px-6 py-4 space-y-4">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-textPrimary">任务描述 *</label>
+                    <textarea
+                      rows={6}
+                      value={generateTaskDescription}
+                      onChange={(e) => setGenerateTaskDescription(e.target.value)}
+                      className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus} resize-none`}
+                      placeholder="请描述您想要完成的任务，AI将帮您自动分解为多个子任务..."
+                      disabled={isGenerating}
+                    />
+                  </div>
+                  <div className="bg-tertiary rounded-lg p-3">
+                    <p className="text-xs text-textSecondary">
+                      <i className="fas fa-info-circle mr-1"></i>
+                      提示：描述越详细，生成的任务越准确。例如："实现用户登录功能，包括表单验证、API调用和错误处理"
+                    </p>
+                  </div>
+                </div>
+                <div className="px-6 py-4 border-t border-border flex items-center space-x-3">
+                  <button
+                    onClick={submitGenerateTask}
+                    disabled={isGenerating}
+                    className={`flex-1 ${styles.btnPrimary} px-4 py-2 rounded-button text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed`}
+                  >
+                    {isGenerating ? (
+                      <>
+                        <i className="fas fa-spinner fa-spin mr-2"></i>
+                        生成中...
+                      </>
+                    ) : (
+                      <>
+                        <i className="fas fa-magic mr-2"></i>
+                        生成任务
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={closeGenerateTaskModal}
+                    disabled={isGenerating}
+                    className={`px-4 py-2 ${styles.btnSecondary} rounded-button text-sm font-medium disabled:opacity-50`}
+                  >
+                    取消
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="px-6 py-4 max-h-[60vh] overflow-y-auto">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between mb-4">
+                      <p className="text-sm text-textSecondary">已生成 {generatedTasks.length} 个任务，请确认：</p>
+                    </div>
+                    {generatedTasks.map((task, index) => (
+                      <div key={index} className="p-4 bg-tertiary rounded-lg border border-border">
+                        <div className="flex items-start justify-between mb-2">
+                          <h4 className="text-sm font-medium text-textPrimary">{task.title}</h4>
+                          <span className={`px-2 py-0.5 rounded-full text-xs ${
+                            task.priority === 'high' ? 'bg-danger text-white' :
+                            task.priority === 'medium' ? 'bg-warning text-white' :
+                            'bg-info text-white'
+                          }`}>
+                            {task.priority === 'high' ? '高' : task.priority === 'medium' ? '中' : '低'}
+                          </span>
+                        </div>
+                        <p className="text-sm text-textSecondary">{task.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="px-6 py-4 border-t border-border flex items-center space-x-3">
+                  <button
+                    onClick={confirmCreateGeneratedTasks}
+                    className={`flex-1 ${styles.btnPrimary} px-4 py-2 rounded-button text-sm font-medium`}
+                  >
+                    <i className="fas fa-check mr-2"></i>
+                    确认创建
+                  </button>
+                  <button
+                    onClick={() => setShowGeneratedTasksConfirm(false)}
+                    className={`px-4 py-2 ${styles.btnSecondary} rounded-button text-sm font-medium`}
+                  >
+                    重新生成
+                  </button>
+                  <button
+                    onClick={closeGenerateTaskModal}
+                    className={`px-4 py-2 ${styles.btnSecondary} rounded-button text-sm font-medium`}
+                  >
+                    取消
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

@@ -375,8 +375,8 @@ const TaskDetailDrawer: React.FC = () => {
         ></div>
 
         {/* 抽屉内容 */}
-        <div 
-          className={`${styles.drawerContent} absolute right-0 top-0 bottom-0 w-[360px] bg-surface overflow-y-auto`}
+        <div
+          className={`${styles.drawerContent} absolute right-0 top-0 bottom-0 w-[720px] bg-surface overflow-y-auto`}
           onClick={(e) => e.stopPropagation()}
         >
           {/* 抽屉头部 */}
@@ -512,59 +512,10 @@ const TaskDetailDrawer: React.FC = () => {
               </div>
             </div>
 
-            {/* 执行日志 - 仅在任务进行中时显示 */}
-            {taskData.status === 'progress' && (
-              <div className="space-y-4">
-                <h3 className="text-sm font-medium text-textSecondary uppercase tracking-wider">执行日志</h3>
-                <TaskMessageStream taskId={taskId} isRunning={taskData.status === 'progress'} />
-              </div>
-            )}
-
-            {/* 执行历史记录 - 显示过去的执行记录 */}
-            <div className="space-y-4 border-2 border-pink-300 rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium text-textSecondary uppercase tracking-wider">执行历史记录</h3>
-                <button
-                  onClick={() => loadExecutionLogs()}
-                  className="text-xs text-primary hover:underline"
-                >
-                  刷新
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                {executionLogs.length === 0 ? (
-                  <div className="text-center text-gray-400 py-4">
-                    <i className="fas fa-info-circle mr-2"></i>
-                    暂无执行历史
-                  </div>
-                ) : (
-                  executionLogs.map((log) => (
-                    <div key={log.id} className="p-3 bg-tertiary rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
-                         onClick={() => viewExecutionLog(log)}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-semibold text-textPrimary">
-                          第 {log.execution_number} 次执行
-                        </span>
-                        <div className="flex items-center space-x-2">
-                          <span className={`text-xs px-2 py-0.5 rounded ${
-                            log.response_type === 'completed' ? 'bg-green-100 text-green-700' :
-                            log.response_type === 'failed' ? 'bg-red-100 text-red-700' : 'bg-gray-100'
-                          }`}>
-                            {log.response_type === 'completed' ? '成功' : log.response_type === 'failed' ? '失败' : log.response_type}
-                          </span>
-                          <span className="text-xs text-gray-500">
-                            {new Date(log.created_at).toLocaleString('zh-CN')}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="text-xs text-gray-600 truncate">
-                        点击查看详细日志
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
+            {/* 最近执行消息 - 显示最新的执行消息流 */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-medium text-textSecondary uppercase tracking-wider">最近执行消息</h3>
+              <TaskMessageStream taskId={taskId} isRunning={taskData.status === 'progress'} />
             </div>
 
             {/* API相关信息 */}

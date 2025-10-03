@@ -5,7 +5,6 @@ from typing import Optional
 from datetime import datetime
 import uuid
 import asyncio
-import threading
 import os
 import json
 
@@ -99,6 +98,8 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
         task_status = "completed"
         error_message = None
         is_task_started = False
+        message_count = 0
+        progress = 0
 
         # 使用 Claude Agent SDK 执行任务
         async for message in query(
@@ -108,6 +109,7 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
             # 记录消息
             output_lines.append(str(message))
             logger.info(f"Agent 消息类型: {type(message).__name__}")
+            message_count += 1
 
             # 构建推送消息
             stream_message = {
@@ -115,13 +117,15 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
                 "raw": str(message)[:500]  # 限制长度
             }
 
-            # 根据消息类型添加额外信息
+            # 根据消息类型添加额外信息并计算进度
             if isinstance(message, SystemMessage):
                 if hasattr(message, 'subtype'):
                     stream_message["subtype"] = message.subtype
                     if message.subtype == 'init':
                         is_task_started = True
                         stream_message["message"] = "Claude Agent 已初始化"
+                        progress = 10
+                        stream_message["progress"] = progress
 
             elif isinstance(message, AssistantMessage):
                 # 提取文本内容
@@ -131,6 +135,9 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
                         texts.append(block.text)
                 if texts:
                     stream_message["text"] = "\n".join(texts)
+                # 根据消息数量动态增加进度（10% - 90%之间）
+                progress = min(10 + (message_count * 8), 90)
+                stream_message["progress"] = progress
 
             elif isinstance(message, ResultMessage):
                 stream_message["is_error"] = message.is_error
@@ -143,10 +150,14 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
                     error_message = getattr(message, 'result', '执行失败')
                     stream_message["message"] = f"任务执行失败: {error_message}"
                     logger.error(f"任务 {task_id} 执行失败: {error_message}")
+                    progress = 100
+                    stream_message["progress"] = progress
                 else:
                     task_status = "completed"
                     stream_message["message"] = "任务执行成功"
                     logger.info(f"任务 {task_id} 执行成功")
+                    progress = 100
+                    stream_message["progress"] = progress
 
                 # 执行结束 hook
                 if stop_hook_url:
@@ -273,17 +284,7 @@ async def execute_claude_agent_task_async(task_id: str, workspace_path: str, tas
             logger.info(f"任务 {task_id} 执行流程结束")
 
 
-def execute_claude_code_task(task_id: str, workspace_path: str, task_description: str):
-    """
-    在后台线程中执行 Claude Agent 任务（同步包装器）
-    """
-    # 创建新的事件循环来运行异步函数
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(execute_claude_agent_task_async(task_id, workspace_path, task_description))
-    finally:
-        loop.close()
+# execute_claude_code_task 已废弃，现在直接使用 asyncio.create_task 调用 execute_claude_agent_task_async
 
 @router.get("/workspaces/{workspace_id}/tasks", response_model=ResponseModel[TaskListResponse])
 def get_tasks(
@@ -319,10 +320,24 @@ def get_tasks(
         query = query.filter(Task.source == source)
 
     # 排序
-    if sort_order == "asc":
-        query = query.order_by(getattr(Task, sort_by).asc())
+    if sort_by == "priority":
+        # 优先级排序：使用CASE将字符串映射为数字
+        from sqlalchemy import case
+        priority_order = case(
+            (Task.priority == 'high', 1),
+            (Task.priority == 'medium', 2),
+            (Task.priority == 'low', 3),
+            else_=4
+        )
+        if sort_order == "asc":
+            query = query.order_by(priority_order.asc())
+        else:
+            query = query.order_by(priority_order.desc())
     else:
-        query = query.order_by(getattr(Task, sort_by).desc())
+        if sort_order == "asc":
+            query = query.order_by(getattr(Task, sort_by).asc())
+        else:
+            query = query.order_by(getattr(Task, sort_by).desc())
 
     total = query.count()
     tasks = query.offset((page - 1) * page_size).limit(page_size).all()
@@ -530,12 +545,12 @@ def delete_task(
     )
 
 @router.post("/tasks/{task_id}/dispatch", response_model=ResponseModel[TaskDispatchResponse])
-def dispatch_task(
+async def dispatch_task(
     task_id: str,
     request: TaskDispatchRequest,
     db: Session = Depends(get_db)
 ):
-    """下发任务"""
+    """下发任务（异步立即返回）"""
     db_task = db.query(Task).filter(Task.id == task_id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -564,13 +579,10 @@ def dispatch_task(
     db.commit()
     db.refresh(db_task)
 
-    # 在后台线程中执行 Claude Code 任务
-    thread = threading.Thread(
-        target=execute_claude_code_task,
-        args=(task_id, workspace.path, db_task.description),
-        daemon=True
+    # 使用 asyncio.create_task 在后台执行任务（非阻塞）
+    asyncio.create_task(
+        execute_claude_agent_task_async(task_id, workspace.path, db_task.description)
     )
-    thread.start()
 
     return ResponseModel(
         code=200,
@@ -583,17 +595,22 @@ def dispatch_task(
     )
 
 @router.post("/tasks/{task_id}/retry", response_model=ResponseModel[TaskDispatchResponse])
-def retry_task(
+async def retry_task(
     task_id: str,
     db: Session = Depends(get_db)
 ):
-    """重试任务"""
+    """重试任务（异步立即返回）"""
     db_task = db.query(Task).filter(Task.id == task_id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
     if db_task.status != "failed":
         raise HTTPException(status_code=400, detail="只能重试失败的任务")
+
+    # 获取工作空间信息
+    workspace = db.query(Workspace).filter(Workspace.id == db_task.workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
 
     # 生成新的执行ID
     execution_id = f"exec-sys-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{str(uuid.uuid4())[:8]}"
@@ -606,7 +623,10 @@ def retry_task(
     db.commit()
     db.refresh(db_task)
 
-    # TODO: 实现实际的任务重试逻辑
+    # 使用 asyncio.create_task 在后台执行任务（非阻塞）
+    asyncio.create_task(
+        execute_claude_agent_task_async(task_id, workspace.path, db_task.description)
+    )
 
     return ResponseModel(
         code=200,
@@ -650,10 +670,13 @@ async def task_message_stream(task_id: str, db: Session = Depends(get_db)):
     """SSE endpoint: 实时推送任务执行消息流"""
     from app.utils.message_stream import message_stream_manager
 
-    # 验证任务是否存在
+    # 验证任务是否存在（验证后立即释放连接，避免SSE长连接占用数据库连接）
     task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 立即关闭数据库连接
+    db.close()
 
     async def event_generator():
         """生成SSE事件流"""
@@ -661,26 +684,22 @@ async def task_message_stream(task_id: str, db: Session = Depends(get_db)):
 
         try:
             while True:
-                # 检查任务状态
-                task = db.query(Task).filter(Task.id == task_id).first()
-                if task and task.status in ["completed", "failed"]:
-                    # 任务已结束，发送最后的消息后断开
-                    try:
-                        # 非阻塞获取剩余消息
-                        while not queue.empty():
-                            message = await asyncio.wait_for(queue.get(), timeout=0.1)
-                            yield f"data: {json.dumps(message, ensure_ascii=False)}\n\n"
-                    except asyncio.TimeoutError:
-                        pass
-
-                    # 发送结束信号
-                    yield f"data: {json.dumps({'type': 'end', 'status': task.status}, ensure_ascii=False)}\n\n"
-                    break
-
                 # 等待新消息 (最多30秒)
                 try:
                     message = await asyncio.wait_for(queue.get(), timeout=30.0)
                     yield f"data: {json.dumps(message, ensure_ascii=False)}\n\n"
+
+                    # 如果收到ResultMessage，说明任务已结束
+                    if message.get('type') == 'ResultMessage':
+                        # 发送剩余消息
+                        try:
+                            while not queue.empty():
+                                msg = await asyncio.wait_for(queue.get(), timeout=0.1)
+                                yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+                        except asyncio.TimeoutError:
+                            pass
+                        break
+
                 except asyncio.TimeoutError:
                     # 发送心跳保持连接
                     yield f": heartbeat\n\n"
@@ -688,7 +707,7 @@ async def task_message_stream(task_id: str, db: Session = Depends(get_db)):
         except asyncio.CancelledError:
             pass
         finally:
-            message_stream_manager.unsubscribe(task_id, queue)
+            await message_stream_manager.unsubscribe(task_id, queue)
 
     return StreamingResponse(
         event_generator(),
@@ -861,3 +880,98 @@ def get_task_diff(
             message=f"获取diff失败: {str(e)}",
             data=""
         )
+
+
+@router.post("/workspaces/{workspace_id}/generate-tasks", response_model=ResponseModel[list[dict]])
+async def generate_tasks(
+    workspace_id: str,
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """使用Claude生成任务列表"""
+    from anthropic import Anthropic
+
+    # 验证工作区是否存在
+    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+
+    # 检查 API Key
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY 未配置")
+
+    # 获取任务描述
+    task_description = request.get("description", "")
+    if not task_description:
+        raise HTTPException(status_code=400, detail="请提供任务描述")
+
+    try:
+        client = Anthropic(api_key=settings.anthropic_api_key)
+
+        # 构建system prompt - 任务生成专用
+        system_prompt = f"""你是一个专业的项目任务规划助手。根据用户提供的需求描述，生成详细的任务分解列表。
+
+工作区信息：
+- 名称：{workspace.name}
+- 项目目标：{workspace.project_goal}
+- 描述：{workspace.description or '无'}
+
+要求：
+1. 将需求分解为具体的、可执行的任务
+2. 每个任务应该是独立的、明确的
+3. 任务应该有合理的优先级（high/medium/low）
+4. 返回JSON格式的任务列表
+
+返回格式示例：
+[
+  {{"title": "任务标题", "description": "详细描述", "priority": "high"}},
+  {{"title": "任务标题", "description": "详细描述", "priority": "medium"}}
+]
+
+只返回JSON数组，不要添加其他说明文字。"""
+
+        # 调用Claude API
+        response = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=4000,
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": task_description}
+            ]
+        )
+
+        # 解析响应
+        content = response.content[0].text
+
+        # 尝试提取JSON数组
+        import re
+        json_match = re.search(r'\[.*\]', content, re.DOTALL)
+        if json_match:
+            tasks_data = json.loads(json_match.group())
+        else:
+            tasks_data = json.loads(content)
+
+        # 验证数据格式
+        if not isinstance(tasks_data, list):
+            raise ValueError("返回的数据格式不正确")
+
+        # 确保每个任务都有必需的字段
+        validated_tasks = []
+        for task in tasks_data:
+            if isinstance(task, dict) and "title" in task and "description" in task:
+                validated_tasks.append({
+                    "title": task["title"],
+                    "description": task["description"],
+                    "priority": task.get("priority", "medium")
+                })
+
+        return ResponseModel(
+            code=200,
+            message=f"成功生成 {len(validated_tasks)} 个任务",
+            data=validated_tasks
+        )
+
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"解析Claude响应失败: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"生成任务失败: {str(e)}")

@@ -54,7 +54,7 @@ echo ""
 
 if [ "$RESTART_ALL" = true ]; then
     echo "Both frontend and backend have been restarted."
-    echo "Frontend: http://localhost:5173"
+    echo "Frontend: http://localhost:"10102
     echo "Backend: http://localhost:10101"
 else
     echo "Backend has been restarted."

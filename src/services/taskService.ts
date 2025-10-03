@@ -109,3 +109,11 @@ export const getTaskStatus = async (taskId: string) => {
   const response = await apiClient.get<any>(`/tasks/${taskId}/status`);
   return response.data;
 };
+
+// Generate tasks using AI
+export const generateTasks = async (workspaceId: string, description: string) => {
+  const response = await apiClient.post<any>(`/workspaces/${workspaceId}/generate-tasks`, {
+    description
+  });
+  return response.data as TaskCreateInput[];
+};
