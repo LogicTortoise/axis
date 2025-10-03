@@ -100,6 +100,7 @@ const WorkspaceDetailPage: React.FC = () => {
   const [taskDiff, setTaskDiff] = useState<string>('');
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState<string>('');
+  const [isSending, setIsSending] = useState<boolean>(false);
 
   // 设置页面标题
   useEffect(() => {
@@ -326,6 +327,112 @@ const WorkspaceDetailPage: React.FC = () => {
     // 加载数据
     await loadWorkspaceFiles();
     await loadTaskDiff(currentTaskId);
+    await loadExecutionLogs(currentTaskId);
+  };
+
+  // 发送聊天消息（流式）
+  const sendChatMessage = async () => {
+    if (!chatInput.trim() || !currentTaskId || isSending) return;
+
+    const userMessage = { role: 'user', content: chatInput };
+    setChatMessages(prev => [...prev, userMessage]);
+    setChatInput('');
+    setIsSending(true);
+
+    // 添加一个空的assistant消息，用于流式更新
+    const assistantMessageIndex = chatMessages.length + 1;
+    setChatMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+
+    try {
+      const response = await fetch(`http://localhost:10101/api/tasks/${currentTaskId}/chat/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: [...chatMessages, userMessage]
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Stream request failed');
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedText = '';
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = JSON.parse(line.slice(6));
+
+              if (data.text) {
+                accumulatedText += data.text;
+                setChatMessages(prev => {
+                  const newMessages = [...prev];
+                  newMessages[assistantMessageIndex] = {
+                    role: 'assistant',
+                    content: accumulatedText
+                  };
+                  return newMessages;
+                });
+              } else if (data.done) {
+                break;
+              } else if (data.error) {
+                showErrorMessage(`对话错误: ${data.error}`);
+                break;
+              }
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Chat error:', error);
+      showErrorMessage('发送消息失败');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // 从执行历史apply对话
+  const applyExecutionLog = (log: ExecutionLog) => {
+    try {
+      // 解析response_content
+      const messages = JSON.parse(log.response_content);
+      if (!Array.isArray(messages)) {
+        setChatMessages([{ role: 'assistant', content: log.response_content }]);
+        return;
+      }
+
+      // 提取AssistantMessage的文本内容
+      const chatHistory: any[] = [];
+      messages.forEach((msg: any) => {
+        if (msg.type === 'AssistantMessage' && msg.text) {
+          chatHistory.push({
+            role: 'assistant',
+            content: msg.text
+          });
+        }
+      });
+
+      if (chatHistory.length > 0) {
+        setChatMessages(chatHistory);
+      } else {
+        // 如果没有提取到消息，使用原始内容
+        setChatMessages([{ role: 'assistant', content: log.response_content }]);
+      }
+    } catch (e) {
+      // 解析失败，直接作为文本添加
+      setChatMessages([{ role: 'assistant', content: log.response_content }]);
+    }
   };
 
   // 打开任务详情抽屉
@@ -1637,21 +1744,34 @@ const WorkspaceDetailPage: React.FC = () => {
                 {(() => {
                   try {
                     const messages = JSON.parse(selectedLog.response_content);
+                    if (!Array.isArray(messages)) {
+                      return (
+                        <div className="p-3 bg-tertiary rounded-lg">
+                          <pre className="text-sm text-textPrimary whitespace-pre-wrap break-words overflow-x-auto">
+                            {selectedLog.response_content}
+                          </pre>
+                        </div>
+                      );
+                    }
+
                     return messages.map((msg: any, index: number) => (
                       <div key={index} className="p-3 bg-tertiary rounded-lg">
                         <div className="flex items-center space-x-2 mb-2">
                           <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                            msg.type === 'text' ? 'bg-blue-100 text-blue-800' :
-                            msg.type === 'tool_use' ? 'bg-green-100 text-green-800' :
-                            msg.type === 'tool_result' ? 'bg-purple-100 text-purple-800' :
+                            msg.type === 'SystemMessage' ? 'bg-gray-100 text-gray-800' :
+                            msg.type === 'AssistantMessage' ? 'bg-blue-100 text-blue-800' :
+                            msg.type === 'UserMessage' ? 'bg-green-100 text-green-800' :
+                            msg.type === 'ResultMessage' ? 'bg-purple-100 text-purple-800' :
                             'bg-gray-100 text-gray-800'
                           }`}>
                             {msg.type}
                           </span>
-                          {msg.name && <span className="text-xs text-textSecondary">{msg.name}</span>}
+                          {msg.progress !== undefined && (
+                            <span className="text-xs text-textSecondary">进度: {msg.progress}%</span>
+                          )}
                         </div>
                         <div className="text-sm text-textPrimary whitespace-pre-wrap break-words">
-                          {msg.text || msg.content || JSON.stringify(msg, null, 2)}
+                          {msg.text || msg.message || msg.content || (msg.type === 'ResultMessage' ? `执行${msg.is_error ? '失败' : '成功'}` : '')}
                         </div>
                       </div>
                     ));
@@ -1734,12 +1854,29 @@ const WorkspaceDetailPage: React.FC = () => {
                 {executionLogs.map((log) => (
                   <div key={log.id} className="p-3 bg-tertiary rounded-lg">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium">第 {log.execution_number} 次执行</span>
-                      <span className={`px-2 py-0.5 rounded-full text-xs ${
-                        log.response_type === 'completed' ? 'bg-success text-white' : 'bg-danger text-white'
-                      }`}>
-                        {log.response_type === 'completed' ? '成功' : '失败'}
+                      <span
+                        onClick={() => openExecutionLogModal(log)}
+                        className="text-sm font-medium hover:underline cursor-pointer"
+                      >
+                        第 {log.execution_number} 次执行
                       </span>
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            applyExecutionLog(log);
+                          }}
+                          className="px-2 py-0.5 bg-primary text-white rounded text-xs hover:bg-opacity-80"
+                          title="Apply到对话"
+                        >
+                          Apply
+                        </button>
+                        <span className={`px-2 py-0.5 rounded-full text-xs ${
+                          log.response_type === 'completed' ? 'bg-success text-white' : 'bg-danger text-white'
+                        }`}>
+                          {log.response_type === 'completed' ? '成功' : '失败'}
+                        </span>
+                      </div>
                     </div>
                     <p className="text-xs text-textSecondary">{log.created_at}</p>
                   </div>
@@ -1791,8 +1928,42 @@ const WorkspaceDetailPage: React.FC = () => {
 
             {/* 右下：对话框 */}
             <div className="bg-surface rounded-lg border border-border overflow-hidden flex flex-col">
-              <div className="p-4 border-b border-border">
+              <div className="p-4 border-b border-border flex items-center justify-between">
                 <h3 className="text-sm font-medium text-textSecondary uppercase">持续对话</h3>
+                {chatMessages.length > 0 && (
+                  <button
+                    onClick={async () => {
+                      if (!currentTaskId || !taskDrawerData) return;
+
+                      // 获取最后一条用户消息作为新的任务描述
+                      const lastUserMsg = chatMessages.filter(m => m.role === 'user').pop();
+                      if (!lastUserMsg) return;
+
+                      try {
+                        // 更新任务描述为对话内容
+                        await updateTask(currentTaskId, {
+                          description: lastUserMsg.content,
+                          status: 'pending'
+                        });
+
+                        // 重新执行任务
+                        await dispatchTask(currentTaskId, { execution_system: 'claude_agent_sdk' });
+                        showSuccessMessage('任务描述已更新并开始执行');
+
+                        // 刷新任务数据
+                        const updatedTask = await getTaskById(currentTaskId);
+                        setTaskDrawerData(updatedTask);
+                      } catch (error) {
+                        console.error('Execute task error:', error);
+                        showErrorMessage('执行任务失败');
+                      }
+                    }}
+                    className="px-3 py-1 bg-primary text-white rounded text-xs hover:bg-opacity-80"
+                    title="基于对话内容更新并执行任务"
+                  >
+                    执行操作
+                  </button>
+                )}
               </div>
               <div className="flex-1 overflow-auto p-4 space-y-2">
                 {chatMessages.length === 0 ? (
@@ -1816,22 +1987,18 @@ const WorkspaceDetailPage: React.FC = () => {
                     placeholder="输入消息..."
                     className={`flex-1 px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus}`}
                     onKeyPress={(e) => {
-                      if (e.key === 'Enter' && chatInput.trim()) {
-                        setChatMessages([...chatMessages, { role: 'user', content: chatInput }]);
-                        setChatInput('');
+                      if (e.key === 'Enter' && chatInput.trim() && !isSending) {
+                        sendChatMessage();
                       }
                     }}
+                    disabled={isSending}
                   />
                   <button
-                    onClick={() => {
-                      if (chatInput.trim()) {
-                        setChatMessages([...chatMessages, { role: 'user', content: chatInput }]);
-                        setChatInput('');
-                      }
-                    }}
-                    className={`${styles.btnPrimary} px-4 py-2 rounded-button text-sm`}
+                    onClick={sendChatMessage}
+                    disabled={isSending || !chatInput.trim()}
+                    className={`${styles.btnPrimary} px-4 py-2 rounded-button text-sm ${isSending || !chatInput.trim() ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
-                    发送
+                    {isSending ? '发送中...' : '发送'}
                   </button>
                 </div>
               </div>

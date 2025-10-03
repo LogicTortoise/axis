@@ -975,3 +975,85 @@ async def generate_tasks(
         raise HTTPException(status_code=500, detail=f"解析Claude响应失败: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成任务失败: {str(e)}")
+
+
+@router.post("/tasks/{task_id}/chat/stream")
+async def stream_task_chat(
+    task_id: str,
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """流式对话接口，使用Claude Agent SDK，支持工具调用"""
+    from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, AssistantMessage, TextBlock
+
+    # 验证task是否存在
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 获取workspace信息
+    workspace = db.query(Workspace).filter(Workspace.id == task.workspace_id).first()
+    workspace_path = workspace.path if workspace else None
+
+    # 获取用户消息（只取最后一条用户消息作为prompt）
+    messages = request.get("messages", [])
+    user_messages = [m for m in messages if m.get('role') == 'user']
+    prompt = user_messages[-1]['content'] if user_messages else "你好"
+
+    # 构建system prompt
+    system_prompt = f"""你是一个AI助手，正在帮助用户处理任务。
+
+工作区信息：
+- 名称：{workspace.name if workspace else 'Unknown'}
+- 项目目标：{workspace.project_goal if workspace else 'Unknown'}
+- 工作目录：{workspace_path or '未设置'}
+
+当前任务：
+- 标题：{task.title}
+- 描述：{task.description or '无'}
+- 优先级：{task.priority}
+- 状态：{task.status}
+
+你可以使用Read、Write、Edit、Bash等工具来帮助用户完成任务。"""
+
+    # 配置Claude Agent选项
+    options = ClaudeAgentOptions(
+        cwd=workspace_path,
+        system_prompt=system_prompt,
+        allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+        permission_mode='acceptEdits'
+    )
+
+    async def generate():
+        try:
+            async with ClaudeSDKClient(options=options) as client:
+                # 发送查询
+                await client.query(prompt)
+
+                # 接收流式响应
+                async for msg in client.receive_response():
+                    if isinstance(msg, AssistantMessage):
+                        # 提取文本内容
+                        for block in msg.content:
+                            if isinstance(block, TextBlock):
+                                yield f"data: {json.dumps({'text': block.text})}\n\n"
+                    elif hasattr(msg, 'text'):
+                        # 其他消息类型
+                        yield f"data: {json.dumps({'text': msg.text})}\n\n"
+
+            # 发送完成信号
+            yield f"data: {json.dumps({'done': True})}\n\n"
+
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n{traceback.format_exc()}"
+            yield f"data: {json.dumps({'error': error_detail})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
