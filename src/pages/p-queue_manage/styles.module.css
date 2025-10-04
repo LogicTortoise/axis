@@ -172,3 +172,60 @@
   z-index: 1000;
 }
 
+.drawerOverlay {
+  background-color: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(2px);
+  position: absolute;
+  inset: 0;
+}
+
+.drawerContent {
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.1);
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 360px;
+  background-color: #FFFFFF;
+  overflow-y: auto;
+}
+
+.checkboxCustom {
+  accent-color: #D4A574;
+}
+
+.statusPending {
+  background-color: #E5DDD5;
+  color: #3E3E3E;
+}
+
+.statusProgress {
+  background-color: #A5C4D4;
+  color: white;
+}
+
+.statusCompleted {
+  background-color: #A8C5A0;
+  color: white;
+}
+
+.statusFailed {
+  background-color: #D4A5A5;
+  color: white;
+}
+
+.priorityHigh {
+  background-color: #D4A5A5;
+  color: white;
+}
+
+.priorityMedium {
+  background-color: #E8C4A0;
+  color: white;
+}
+
+.priorityLow {
+  background-color: #A5C4D4;
+  color: white;
+}
+

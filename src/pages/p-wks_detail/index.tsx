@@ -16,6 +16,7 @@ import {
   TaskUpdateInput,
   TaskListParams
 } from '../../services/taskService';
+import { createQueue, CreateQueueInput } from '../../services/queueService';
 import ProgressBar from '../../components/ProgressBar';
 import axios from 'axios';
 import { API_BASE_URL } from '../../services/api';
@@ -58,10 +59,12 @@ const WorkspaceDetailPage: React.FC = () => {
   const [showDispatchConfirmModal, setShowDispatchConfirmModal] = useState<boolean>(false);
   const [showEditWorkspaceModal, setShowEditWorkspaceModal] = useState<boolean>(false);
   const [showGenerateTaskModal, setShowGenerateTaskModal] = useState<boolean>(false);
+  const [showAddToQueueModal, setShowAddToQueueModal] = useState<boolean>(false);
   const [deleteTaskName, setDeleteTaskName] = useState<string>('');
   const [dispatchTaskName, setDispatchTaskName] = useState<string>('');
   const [dispatchTaskId, setDispatchTaskId] = useState<string>('');
   const [isRetryDispatch, setIsRetryDispatch] = useState<boolean>(false);
+  const [queueName, setQueueName] = useState<string>('');
 
   // 生成任务相关状态
   const [generateTaskDescription, setGenerateTaskDescription] = useState<string>('');
@@ -766,6 +769,34 @@ const WorkspaceDetailPage: React.FC = () => {
     }
   };
 
+  // 添加到队列
+  const handleAddToQueue = async () => {
+    if (!queueName.trim()) {
+      showErrorMessage('请输入队列名称');
+      return;
+    }
+
+    if (selectedTaskIds.length === 0) {
+      showErrorMessage('请先选择要添加的任务');
+      return;
+    }
+
+    try {
+      const queueData: CreateQueueInput = {
+        name: queueName,
+        task_ids: selectedTaskIds
+      };
+      await createQueue(currentWorkspaceId, queueData);
+      setShowAddToQueueModal(false);
+      setQueueName('');
+      setSelectedTaskIds([]);
+      showSuccessMessage(`成功创建队列，已添加 ${selectedTaskIds.length} 个任务`);
+    } catch (error) {
+      console.error('Failed to create queue:', error);
+      showErrorMessage('创建队列失败');
+    }
+  };
+
   // 显示成功消息
   const showSuccessMessage = (message: string) => {
     showNotification(message, 'success');
@@ -1024,7 +1055,7 @@ const WorkspaceDetailPage: React.FC = () => {
 
               <div className="flex items-center space-x-2">
                 <button
-                  onClick={() => showInfoMessage('添加到队列功能待实现')}
+                  onClick={() => setShowAddToQueueModal(true)}
                   disabled={selectedTaskIds.length === 0}
                   className={`${styles.btnSecondary} px-4 py-2 rounded-button text-sm font-medium flex items-center space-x-2 disabled:opacity-50`}
                 >
@@ -1650,6 +1681,56 @@ const WorkspaceDetailPage: React.FC = () => {
         </div>
       )}
 
+      {/* Add to Queue Modal */}
+      {showAddToQueueModal && (
+        <div className="fixed inset-0 z-50">
+          <div className={styles.modalOverlay} onClick={() => setShowAddToQueueModal(false)}></div>
+          <div className={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-border">
+              <h3 className="text-lg font-semibold text-textPrimary">添加到队列</h3>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-textPrimary">队列名称 *</label>
+                <input
+                  type="text"
+                  value={queueName}
+                  onChange={(e) => setQueueName(e.target.value)}
+                  className={`w-full px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus}`}
+                  placeholder="请输入队列名称"
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter' && queueName.trim()) {
+                      handleAddToQueue();
+                    }
+                  }}
+                />
+              </div>
+              <div className="text-sm text-textSecondary">
+                将 {selectedTaskIds.length} 个任务添加到此队列
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-border flex items-center space-x-3">
+              <button
+                onClick={handleAddToQueue}
+                className={`flex-1 ${styles.btnPrimary} px-4 py-2 rounded-button text-sm font-medium`}
+              >
+                <i className="fas fa-layer-group mr-2"></i>
+                确认添加
+              </button>
+              <button
+                onClick={() => {
+                  setShowAddToQueueModal(false);
+                  setQueueName('');
+                }}
+                className={`px-4 py-2 ${styles.btnSecondary} rounded-button text-sm font-medium`}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Generate Tasks Modal */}
       {showGenerateTaskModal && (
         <div className="fixed inset-0 z-50">
@@ -1931,7 +2012,7 @@ const WorkspaceDetailPage: React.FC = () => {
                   </pre>
                 )}
               </div>
-            </div>
+              </div>
             </div>
 
             {/* 右侧区域：执行历史 + 对话框 */}
