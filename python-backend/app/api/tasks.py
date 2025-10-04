@@ -1004,6 +1004,7 @@ async def stream_task_chat(
     # 获取thread信息
     thread_id = request.get("thread_id")
     thread_number = request.get("thread_number")
+    execution_number = request.get("execution_number")  # 如果提供，则更新现有记录；否则创建新记录
 
     # 构建system prompt
     system_prompt = f"""你是一个AI助手，正在帮助用户处理任务。
@@ -1055,40 +1056,74 @@ async def stream_task_chat(
 
             # 保存执行日志
             try:
-                # 获取当前任务的最大execution_number
-                max_execution = db.query(func.max(TaskExecutionLog.execution_number)).filter(
-                    TaskExecutionLog.task_id == task_id
-                ).scalar() or 0
+                # 构建完整的对话历史（包含所有历史消息+AI新回复）
+                chat_history = []
+                # 添加所有历史消息
+                for msg in messages:
+                    msg_type = "UserMessage" if msg.get('role') == 'user' else "AssistantMessage"
+                    chat_history.append({
+                        "type": msg_type,
+                        "role": msg.get('role'),
+                        "content": msg.get('content'),
+                        "text": msg.get('content')
+                    })
 
-                # 构建完整的对话历史（用户消息+AI回复）
-                chat_history = [
-                    {
-                        "type": "UserMessage",
-                        "role": "user",
-                        "content": prompt,
-                        "text": prompt
-                    },
-                    {
-                        "type": "AssistantMessage",
-                        "role": "assistant",
-                        "content": accumulated_text,
-                        "text": accumulated_text
-                    }
-                ]
+                # 添加AI的新回复
+                chat_history.append({
+                    "type": "AssistantMessage",
+                    "role": "assistant",
+                    "content": accumulated_text,
+                    "text": accumulated_text
+                })
 
-                # 创建执行日志
-                execution_log = TaskExecutionLog(
-                    id=str(uuid.uuid4()),
-                    task_id=task_id,
-                    execution_number=max_execution + 1,
-                    response_type='chat',
-                    response_content=json.dumps(chat_history, ensure_ascii=False),
-                    status='completed',
-                    thread_id=thread_id,
-                    thread_number=thread_number
-                )
-                db.add(execution_log)
-                db.commit()
+                if execution_number is not None:
+                    # 更新模式：更新现有的执行记录
+                    execution_log = db.query(TaskExecutionLog).filter(
+                        TaskExecutionLog.task_id == task_id,
+                        TaskExecutionLog.execution_number == execution_number
+                    ).first()
+
+                    if execution_log:
+                        execution_log.response_content = json.dumps(chat_history, ensure_ascii=False)
+                        execution_log.status = 'completed'
+                        execution_log.thread_number = thread_number
+                        db.commit()
+                    else:
+                        print(f"Warning: execution_number {execution_number} not found, will create new log")
+                        # 如果找不到，仍然创建新记录
+                        max_execution = db.query(func.max(TaskExecutionLog.execution_number)).filter(
+                            TaskExecutionLog.task_id == task_id
+                        ).scalar() or 0
+                        execution_log = TaskExecutionLog(
+                            id=str(uuid.uuid4()),
+                            task_id=task_id,
+                            execution_number=max_execution + 1,
+                            response_type='chat',
+                            response_content=json.dumps(chat_history, ensure_ascii=False),
+                            status='completed',
+                            thread_id=thread_id,
+                            thread_number=thread_number
+                        )
+                        db.add(execution_log)
+                        db.commit()
+                else:
+                    # 创建模式：创建新的执行记录
+                    max_execution = db.query(func.max(TaskExecutionLog.execution_number)).filter(
+                        TaskExecutionLog.task_id == task_id
+                    ).scalar() or 0
+
+                    execution_log = TaskExecutionLog(
+                        id=str(uuid.uuid4()),
+                        task_id=task_id,
+                        execution_number=max_execution + 1,
+                        response_type='chat',
+                        response_content=json.dumps(chat_history, ensure_ascii=False),
+                        status='completed',
+                        thread_id=thread_id,
+                        thread_number=thread_number
+                    )
+                    db.add(execution_log)
+                    db.commit()
             except Exception as log_error:
                 print(f"Failed to save execution log: {log_error}")
 

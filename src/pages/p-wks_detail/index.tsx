@@ -105,6 +105,7 @@ const WorkspaceDetailPage: React.FC = () => {
   const [isSending, setIsSending] = useState<boolean>(false);
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
   const [threadNumber, setThreadNumber] = useState<number>(1);
+  const [currentExecutionNumber, setCurrentExecutionNumber] = useState<number | null>(null);
 
   // 设置页面标题
   useEffect(() => {
@@ -338,9 +339,9 @@ const WorkspaceDetailPage: React.FC = () => {
   const sendChatMessage = async () => {
     if (!chatInput.trim() || !currentTaskId || isSending) return;
 
-    // 如果是新对话（聊天消息为空），生成新的thread id
+    // 如果是新对话（聊天消息为空）或thread_id不存在，生成新的thread id
     let threadId = currentThreadId;
-    if (chatMessages.length === 0) {
+    if (chatMessages.length === 0 || !threadId) {
       threadId = `thread_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       setCurrentThreadId(threadId);
     }
@@ -363,7 +364,8 @@ const WorkspaceDetailPage: React.FC = () => {
         body: JSON.stringify({
           messages: [...chatMessages, userMessage],
           thread_id: threadId,
-          thread_number: threadNumber
+          thread_number: threadNumber,
+          ...(currentExecutionNumber !== null && { execution_number: currentExecutionNumber })
         })
       });
 
@@ -398,7 +400,8 @@ const WorkspaceDetailPage: React.FC = () => {
                   return newMessages;
                 });
               } else if (data.done) {
-                // 对话完成，刷新执行历史
+                // 对话完成，递增thread number并刷新执行历史
+                setThreadNumber(prev => prev + 1);
                 if (currentTaskId) {
                   await loadExecutionLogs(currentTaskId);
                 }
@@ -447,6 +450,17 @@ const WorkspaceDetailPage: React.FC = () => {
 
       if (chatHistory.length > 0) {
         setChatMessages(chatHistory);
+        // 设置thread信息，以便后续对话在同一thread中继续
+        if (log.thread_id) {
+          setCurrentThreadId(log.thread_id);
+        }
+        if (log.thread_number !== null && log.thread_number !== undefined) {
+          setThreadNumber(log.thread_number);
+        }
+        // 设置当前执行记录号，以便后续对话更新该记录而非创建新记录
+        if (log.execution_number !== null && log.execution_number !== undefined) {
+          setCurrentExecutionNumber(log.execution_number);
+        }
       } else {
         // 如果没有提取到消息，使用原始内容
         setChatMessages([{ role: 'assistant', content: log.response_content }]);
@@ -462,6 +476,7 @@ const WorkspaceDetailPage: React.FC = () => {
     setChatMessages([]);
     setCurrentThreadId(null);
     setThreadNumber(prev => prev + 1);
+    setCurrentExecutionNumber(null);
   };
 
   // 打开任务详情抽屉
