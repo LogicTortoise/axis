@@ -29,6 +29,8 @@ interface ExecutionLog {
   status: string;
   created_at: string;
   updated_at: string;
+  thread_id?: string;
+  thread_number?: number;
 }
 
 const WorkspaceDetailPage: React.FC = () => {
@@ -101,6 +103,8 @@ const WorkspaceDetailPage: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState<string>('');
   const [isSending, setIsSending] = useState<boolean>(false);
+  const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
+  const [threadNumber, setThreadNumber] = useState<number>(1);
 
   // 设置页面标题
   useEffect(() => {
@@ -334,14 +338,21 @@ const WorkspaceDetailPage: React.FC = () => {
   const sendChatMessage = async () => {
     if (!chatInput.trim() || !currentTaskId || isSending) return;
 
-    const userMessage = { role: 'user', content: chatInput };
+    // 如果是新对话（聊天消息为空），生成新的thread id
+    let threadId = currentThreadId;
+    if (chatMessages.length === 0) {
+      threadId = `thread_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      setCurrentThreadId(threadId);
+    }
+
+    const userMessage = { role: 'user', content: chatInput, threadId, threadNumber };
     setChatMessages(prev => [...prev, userMessage]);
     setChatInput('');
     setIsSending(true);
 
     // 添加一个空的assistant消息，用于流式更新
     const assistantMessageIndex = chatMessages.length + 1;
-    setChatMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+    setChatMessages(prev => [...prev, { role: 'assistant', content: '', threadId, threadNumber }]);
 
     try {
       const response = await fetch(`http://localhost:10101/api/tasks/${currentTaskId}/chat/stream`, {
@@ -350,7 +361,9 @@ const WorkspaceDetailPage: React.FC = () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          messages: [...chatMessages, userMessage]
+          messages: [...chatMessages, userMessage],
+          thread_id: threadId,
+          thread_number: threadNumber
         })
       });
 
@@ -385,6 +398,10 @@ const WorkspaceDetailPage: React.FC = () => {
                   return newMessages;
                 });
               } else if (data.done) {
+                // 对话完成，刷新执行历史
+                if (currentTaskId) {
+                  await loadExecutionLogs(currentTaskId);
+                }
                 break;
               } else if (data.error) {
                 showErrorMessage(`对话错误: ${data.error}`);
@@ -412,10 +429,15 @@ const WorkspaceDetailPage: React.FC = () => {
         return;
       }
 
-      // 提取AssistantMessage的文本内容
+      // 提取UserMessage和AssistantMessage的文本内容
       const chatHistory: any[] = [];
       messages.forEach((msg: any) => {
-        if (msg.type === 'AssistantMessage' && msg.text) {
+        if (msg.type === 'UserMessage' && msg.text) {
+          chatHistory.push({
+            role: 'user',
+            content: msg.text
+          });
+        } else if (msg.type === 'AssistantMessage' && msg.text) {
           chatHistory.push({
             role: 'assistant',
             content: msg.text
@@ -433,6 +455,13 @@ const WorkspaceDetailPage: React.FC = () => {
       // 解析失败，直接作为文本添加
       setChatMessages([{ role: 'assistant', content: log.response_content }]);
     }
+  };
+
+  // 开始新对话
+  const startNewThread = () => {
+    setChatMessages([]);
+    setCurrentThreadId(null);
+    setThreadNumber(prev => prev + 1);
   };
 
   // 打开任务详情抽屉
@@ -1817,9 +1846,11 @@ const WorkspaceDetailPage: React.FC = () => {
           </div>
 
           {/* 4区域布局 */}
-          <div className="h-[calc(100vh-56px)] grid grid-cols-2 gap-1 p-1">
-            {/* 左上：任务信息 */}
-            <div className="bg-surface rounded-lg border border-border overflow-auto">
+          <div className="h-[calc(100vh-56px)] grid grid-cols-3 gap-1 p-1">
+            {/* 左侧区域：任务信息 + 文件列表 */}
+            <div className="space-y-1 flex flex-col">
+              {/* 左上：任务信息 */}
+              <div className="bg-surface rounded-lg border border-border overflow-auto flex-shrink-0" style={{maxHeight: '40%'}}>
               <div className="p-4 border-b border-border">
                 <h3 className="text-sm font-medium text-textSecondary uppercase">任务信息</h3>
               </div>
@@ -1843,49 +1874,10 @@ const WorkspaceDetailPage: React.FC = () => {
                   </div>
                 </div>
               </div>
-            </div>
-
-            {/* 右上：执行历史/对话记录 */}
-            <div className="bg-surface rounded-lg border border-border overflow-auto">
-              <div className="p-4 border-b border-border">
-                <h3 className="text-sm font-medium text-textSecondary uppercase">执行历史 & 对话记录</h3>
               </div>
-              <div className="p-4 space-y-2">
-                {executionLogs.map((log) => (
-                  <div key={log.id} className="p-3 bg-tertiary rounded-lg">
-                    <div className="flex items-center justify-between mb-1">
-                      <span
-                        onClick={() => openExecutionLogModal(log)}
-                        className="text-sm font-medium hover:underline cursor-pointer"
-                      >
-                        第 {log.execution_number} 次执行
-                      </span>
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            applyExecutionLog(log);
-                          }}
-                          className="px-2 py-0.5 bg-primary text-white rounded text-xs hover:bg-opacity-80"
-                          title="Apply到对话"
-                        >
-                          Apply
-                        </button>
-                        <span className={`px-2 py-0.5 rounded-full text-xs ${
-                          log.response_type === 'completed' ? 'bg-success text-white' : 'bg-danger text-white'
-                        }`}>
-                          {log.response_type === 'completed' ? '成功' : '失败'}
-                        </span>
-                      </div>
-                    </div>
-                    <p className="text-xs text-textSecondary">{log.created_at}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
 
-            {/* 左下：文件列表/Diff切换 */}
-            <div className="bg-surface rounded-lg border border-border overflow-hidden flex flex-col">
+              {/* 左下：文件列表/Diff切换 */}
+              <div className="bg-surface rounded-lg border border-border overflow-hidden flex flex-col flex-1">
               <div className="p-2 border-b border-border flex space-x-2">
                 <button
                   onClick={() => setActiveLeftTab('files')}
@@ -1925,81 +1917,110 @@ const WorkspaceDetailPage: React.FC = () => {
                 )}
               </div>
             </div>
+            </div>
 
-            {/* 右下：对话框 */}
-            <div className="bg-surface rounded-lg border border-border overflow-hidden flex flex-col">
-              <div className="p-4 border-b border-border flex items-center justify-between">
-                <h3 className="text-sm font-medium text-textSecondary uppercase">持续对话</h3>
-                {chatMessages.length > 0 && (
+            {/* 右侧区域：执行历史 + 对话框 */}
+            <div className="col-span-2 space-y-1 flex flex-col">
+              {/* 右上：执行历史 */}
+              <div className="bg-surface rounded-lg border border-border overflow-hidden flex flex-col flex-shrink-0" style={{maxHeight: '40%'}}>
+                <div className="p-4 border-b border-border flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-textSecondary uppercase">执行历史</h3>
                   <button
-                    onClick={async () => {
-                      if (!currentTaskId || !taskDrawerData) return;
-
-                      // 获取最后一条用户消息作为新的任务描述
-                      const lastUserMsg = chatMessages.filter(m => m.role === 'user').pop();
-                      if (!lastUserMsg) return;
-
-                      try {
-                        // 更新任务描述为对话内容
-                        await updateTask(currentTaskId, {
-                          description: lastUserMsg.content,
-                          status: 'pending'
-                        });
-
-                        // 重新执行任务
-                        await dispatchTask(currentTaskId, { execution_system: 'claude_agent_sdk' });
-                        showSuccessMessage('任务描述已更新并开始执行');
-
-                        // 刷新任务数据
-                        const updatedTask = await getTaskById(currentTaskId);
-                        setTaskDrawerData(updatedTask);
-                      } catch (error) {
-                        console.error('Execute task error:', error);
-                        showErrorMessage('执行任务失败');
-                      }
-                    }}
-                    className="px-3 py-1 bg-primary text-white rounded text-xs hover:bg-opacity-80"
-                    title="基于对话内容更新并执行任务"
+                    onClick={() => currentTaskId && loadExecutionLogs(currentTaskId)}
+                    className="text-xs text-primary hover:underline"
                   >
-                    执行操作
+                    刷新
                   </button>
-                )}
-              </div>
-              <div className="flex-1 overflow-auto p-4 space-y-2">
-                {chatMessages.length === 0 ? (
-                  <p className="text-sm text-textSecondary">开始对话...</p>
-                ) : (
-                  chatMessages.map((msg, idx) => (
-                    <div key={idx} className={`p-3 rounded-lg ${
-                      msg.role === 'user' ? 'bg-primary text-white ml-8' : 'bg-tertiary mr-8'
-                    }`}>
-                      <p className="text-sm">{msg.content}</p>
+                </div>
+                <div className="flex-1 overflow-auto p-4">
+                  {executionLogs.length === 0 ? (
+                    <p className="text-sm text-textSecondary text-center py-4">暂无执行记录</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {executionLogs.map((log) => (
+                        <div
+                          key={log.id}
+                          className="p-2 bg-tertiary rounded-lg flex items-center justify-between hover:bg-border cursor-pointer transition-colors"
+                        >
+                          <span onClick={() => openExecutionLogModal(log)} className="text-sm text-textPrimary hover:underline flex-1">
+                            第 {log.execution_number} 次执行
+                            {log.thread_number && <span className="text-xs text-textSecondary ml-2">(第{log.thread_number}次对话)</span>}
+                            · {log.created_at}
+                          </span>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => applyExecutionLog(log)}
+                              className="px-2 py-1 bg-primary text-white text-xs rounded hover:bg-blue-600 transition-colors"
+                            >
+                              Apply
+                            </button>
+                            <span className={`px-2 py-0.5 rounded-full text-xs ${
+                              log.response_type === 'completed' ? 'bg-success text-white' :
+                              log.response_type === 'failed' ? 'bg-danger text-white' :
+                              'bg-warning text-white'
+                            }`}>
+                              {log.response_type === 'completed' ? '成功' :
+                               log.response_type === 'failed' ? '失败' :
+                               log.response_type}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))
-                )}
+                  )}
+                </div>
               </div>
-              <div className="p-4 border-t border-border">
-                <div className="flex space-x-2">
-                  <input
-                    type="text"
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="输入消息..."
-                    className={`flex-1 px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus}`}
-                    onKeyPress={(e) => {
-                      if (e.key === 'Enter' && chatInput.trim() && !isSending) {
-                        sendChatMessage();
-                      }
-                    }}
-                    disabled={isSending}
-                  />
+
+              {/* 右下：对话框 */}
+              <div className="bg-surface rounded-lg border border-border overflow-hidden flex flex-col flex-1">
+                <div className="p-4 border-b border-border flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <h3 className="text-sm font-medium text-textSecondary uppercase">持续对话</h3>
+                    <span className="text-xs text-textSecondary">- 第 {threadNumber} 次对话</span>
+                  </div>
                   <button
-                    onClick={sendChatMessage}
-                    disabled={isSending || !chatInput.trim()}
-                    className={`${styles.btnPrimary} px-4 py-2 rounded-button text-sm ${isSending || !chatInput.trim() ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    onClick={startNewThread}
+                    className="px-3 py-1 bg-primary text-white text-xs rounded hover:bg-blue-600 transition-colors"
                   >
-                    {isSending ? '发送中...' : '发送'}
+                    新建对话
                   </button>
+                </div>
+                <div className="flex-1 overflow-auto p-4 space-y-2">
+                  {chatMessages.length === 0 ? (
+                    <p className="text-sm text-textSecondary">开始对话...</p>
+                  ) : (
+                    chatMessages.map((msg, idx) => (
+                      <div key={idx} className={`p-3 rounded-lg ${
+                        msg.role === 'user' ? 'bg-primary text-white ml-8' : 'bg-tertiary mr-8'
+                      }`}>
+                        <p className="text-sm">{msg.content}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="p-4 border-t border-border">
+                  <div className="flex space-x-2">
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder="输入消息..."
+                      className={`flex-1 px-4 py-2 border border-border rounded-button text-sm ${styles.inputFocus}`}
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter' && chatInput.trim() && !isSending) {
+                          sendChatMessage();
+                        }
+                      }}
+                      disabled={isSending}
+                    />
+                    <button
+                      onClick={sendChatMessage}
+                      disabled={isSending || !chatInput.trim()}
+                      className={`${styles.btnPrimary} px-4 py-2 rounded-button text-sm ${isSending || !chatInput.trim() ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      {isSending ? '发送中...' : '发送'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

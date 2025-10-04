@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import Optional
 from datetime import datetime
 import uuid
@@ -1000,6 +1001,10 @@ async def stream_task_chat(
     user_messages = [m for m in messages if m.get('role') == 'user']
     prompt = user_messages[-1]['content'] if user_messages else "你好"
 
+    # 获取thread信息
+    thread_id = request.get("thread_id")
+    thread_number = request.get("thread_number")
+
     # 构建system prompt
     system_prompt = f"""你是一个AI助手，正在帮助用户处理任务。
 
@@ -1025,6 +1030,9 @@ async def stream_task_chat(
     )
 
     async def generate():
+        all_messages = []
+        accumulated_text = ""
+
         try:
             async with ClaudeSDKClient(options=options) as client:
                 # 发送查询
@@ -1032,14 +1040,57 @@ async def stream_task_chat(
 
                 # 接收流式响应
                 async for msg in client.receive_response():
+                    all_messages.append(msg)
+
                     if isinstance(msg, AssistantMessage):
                         # 提取文本内容
                         for block in msg.content:
                             if isinstance(block, TextBlock):
+                                accumulated_text += block.text
                                 yield f"data: {json.dumps({'text': block.text})}\n\n"
                     elif hasattr(msg, 'text'):
                         # 其他消息类型
+                        accumulated_text += msg.text
                         yield f"data: {json.dumps({'text': msg.text})}\n\n"
+
+            # 保存执行日志
+            try:
+                # 获取当前任务的最大execution_number
+                max_execution = db.query(func.max(TaskExecutionLog.execution_number)).filter(
+                    TaskExecutionLog.task_id == task_id
+                ).scalar() or 0
+
+                # 构建完整的对话历史（用户消息+AI回复）
+                chat_history = [
+                    {
+                        "type": "UserMessage",
+                        "role": "user",
+                        "content": prompt,
+                        "text": prompt
+                    },
+                    {
+                        "type": "AssistantMessage",
+                        "role": "assistant",
+                        "content": accumulated_text,
+                        "text": accumulated_text
+                    }
+                ]
+
+                # 创建执行日志
+                execution_log = TaskExecutionLog(
+                    id=str(uuid.uuid4()),
+                    task_id=task_id,
+                    execution_number=max_execution + 1,
+                    response_type='chat',
+                    response_content=json.dumps(chat_history, ensure_ascii=False),
+                    status='completed',
+                    thread_id=thread_id,
+                    thread_number=thread_number
+                )
+                db.add(execution_log)
+                db.commit()
+            except Exception as log_error:
+                print(f"Failed to save execution log: {log_error}")
 
             # 发送完成信号
             yield f"data: {json.dumps({'done': True})}\n\n"
@@ -1047,6 +1098,28 @@ async def stream_task_chat(
         except Exception as e:
             import traceback
             error_detail = f"{str(e)}\n{traceback.format_exc()}"
+
+            # 保存错误日志
+            try:
+                max_execution = db.query(func.max(TaskExecutionLog.execution_number)).filter(
+                    TaskExecutionLog.task_id == task_id
+                ).scalar() or 0
+
+                execution_log = TaskExecutionLog(
+                    id=str(uuid.uuid4()),
+                    task_id=task_id,
+                    execution_number=max_execution + 1,
+                    response_type='chat_error',
+                    response_content=error_detail,
+                    status='failed',
+                    thread_id=thread_id,
+                    thread_number=thread_number
+                )
+                db.add(execution_log)
+                db.commit()
+            except Exception as log_error:
+                print(f"Failed to save error log: {log_error}")
+
             yield f"data: {json.dumps({'error': error_detail})}\n\n"
 
     return StreamingResponse(

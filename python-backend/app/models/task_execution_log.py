@@ -13,6 +13,8 @@ class TaskExecutionLog(Base):
     response_type = Column(String)  # response的类型
     response_content = Column(Text)  # response的完整内容，可能非常大
     status = Column(String, default='running')  # running, completed, failed
+    thread_id = Column(String, index=True)  # 对话线程ID
+    thread_number = Column(Integer)  # 第几次对话
     created_at = Column(TIMESTAMP, server_default=func.now(), index=True)
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
 
